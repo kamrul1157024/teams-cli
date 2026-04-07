@@ -49,6 +49,33 @@ If the profile exists, proceed to what the user asked for.
 
 ---
 
+## Chat ID Cache
+
+Maintain a local cache at `~/.teams-agent/cache/chats.json` to avoid re-fetching the full
+chat list every time. Format:
+
+```json
+{
+  "updated_at": "2026-04-08T10:00:00Z",
+  "by_name": {"Alice Smith": "19:xxx@thread.v2", "DevOps Team": "19:yyy@thread.v2"},
+  "by_email": {"alice@company.com": "19:xxx@thread.v2"}
+}
+```
+
+**Lookup order when resolving a recipient:**
+
+1. Check `~/.teams-agent/cache/chats.json` (name or email match)
+2. Check `~/.teams-agent/contacts/<name>.md` for stored chat IDs
+3. Fall back to `teams-cli chats list --format json` API call
+
+**Cache refresh rules:**
+- Rebuild if cache is older than 24 hours
+- Rebuild if a name/email lookup misses in cache
+- After rebuild, write updated timestamp
+- Build cache during initial profile setup (Step 1)
+
+---
+
 ## Building Your Profile (First-Time Setup)
 
 This runs automatically when `/teams` is invoked and no profile exists. The profile
@@ -119,6 +146,12 @@ for m in data:
 ## Things I Avoid
 - [Patterns NOT seen in their messages]
 
+## Bangla Communication
+- Default pronoun: tumi
+- Use "apni" for: [seniors, managers, formal contacts]
+- Use "tui" for: [very close friends only, if explicitly allowed]
+- Bangla script usage: [yes/no, when]
+
 ## Work Context
 - Role: [from user profile]
 - Timezone: [if determinable]
@@ -148,6 +181,10 @@ into one profile. When in doubt, ask the user.
 ```markdown
 # [Contact Name]
 email: [email]
+
+## Bangla Pronoun
+- pronoun: [tui | tumi | apni]
+- Note: default to "tumi" if unsure. "apni" for seniors/managers, "tui" only if very close
 
 ## Chat IDs
 - [1:1 chat ID, if exists]
@@ -472,14 +509,15 @@ for m in data:
 
 ## Drafting Replies with Context
 
-When drafting a reply, load context in this order:
+When drafting a reply, load context in this order. This is a **mandatory checklist** — do not
+skip any step. If a file is missing, note it and proceed with defaults.
 
-1. **Safety rules** — read `~/.teams-agent/safety-rules.md` (always apply)
-2. **Persona** — read `~/.teams-agent/persona.md` (base tone)
-3. **Contact profile** — read `~/.teams-agent/contacts/<name>.md` (relationship-specific tone)
-4. **Group profile** — if group chat, read `~/.teams-agent/groups/<name>.md` (group dynamics)
-5. **Patterns** — read relevant `~/.teams-agent/patterns/*.md` (topic-specific templates)
-6. **Conversation history** — fetch via `teams-cli messages list` (recent context)
+- [ ] **Safety rules** — read `~/.teams-agent/safety-rules.md` (always apply)
+- [ ] **Persona** — read `~/.teams-agent/persona.md` (base tone)
+- [ ] **Contact profile** — read `~/.teams-agent/contacts/<name>.md` (relationship-specific tone)
+- [ ] **Group profile** — if group chat, read `~/.teams-agent/groups/<name>.md` (group dynamics)
+- [ ] **Patterns** — read relevant `~/.teams-agent/patterns/*.md` (topic-specific templates)
+- [ ] **Conversation history** — fetch via `teams-cli messages list` (recent context)
 
 Then draft the reply following these rules:
 
@@ -586,3 +624,45 @@ If a message touches on politics, religion, or controversial topics:
 - **Contact profile missing:** Proceed with professional-neutral tone, offer to create one after.
 - **Large JSON response:** Always pipe through python3 to extract needed fields (see "Handling Large JSON Output").
 - **`--from` filter returns empty:** Use python3 post-processing filter instead (see "Known issue" in Messages section).
+- **Send message parse error:** The send command may return a JSON parsing error even when the
+  message was actually delivered. If you get a parse/unmarshal error after sending, verify
+  delivery by fetching recent messages from the same chat:
+  ```bash
+  teams-cli messages list <chat-id> -n 5 --format json
+  ```
+  If the sent message appears in the results, it was delivered despite the error.
+- **Users search returns empty/error:** The `teams-cli users search` command requires an
+  **exact email address** — it does NOT support display name search. If you only have a
+  display name, find the email by:
+  1. Checking contact profiles in `~/.teams-agent/contacts/`
+  2. Looking at chat member lists from `teams-cli chats list --format json` (members include MRI which contains the email)
+  3. Asking the user for the email
+
+## Chat Validation Before Sending
+
+**ALWAYS validate before sending a message to a chat ID:**
+
+1. **Distinguish true 1:1 from meeting chats:** Meeting chat IDs often contain `meeting_` in
+   the ID or have titles like "Understand Task..." that don't match a person's name. True 1:1
+   chats have IDs like `19:xxxx@thread.v2` without `meeting_`.
+   - For personal messages, **prefer true 1:1 chats** (no `meeting_` in ID)
+   - If only meeting chats exist with the person, warn the user:
+     > "This is a meeting chat, not a true 1:1. Other participants may have been in this chat.
+     > Want me to send here or use `--to email` to create a proper 1:1?"
+   - When in doubt, use `teams-cli messages send --to email "text"` which guarantees a proper
+     direct chat
+
+2. **Check for stale/deleted accounts:** Before sending to a chat, verify members are active:
+   - If a member MRI appears in the chat but `teams-cli users search <email>` returns no
+     result or an empty display name, that account may be deleted/deactivated
+   - Don't send to chats with unknown/deleted members without warning the user:
+     > "This chat has a member ([MRI]) whose account appears deleted. Messages here may not
+     > reach the intended recipient. Want me to create a fresh 1:1 instead?"
+
+3. **Verify chat is active:** For any chat you haven't used recently:
+   - Fetch a few recent messages to confirm the chat has activity
+   - If the chat title doesn't match the intended recipient's name, flag it
+   - If the chat has no recent messages (>30 days), suggest creating a new conversation
+
+4. **Prefer `--to email` for 1:1 messages:** Using `--to user@company.com` is safer than
+   sending to a raw chat ID because it resolves to the correct 1:1 chat or creates one.
