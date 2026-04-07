@@ -356,35 +356,37 @@ teams-cli me --format json        # Current user profile
 ### Chats
 
 ```bash
-teams-cli chats list --format json                    # All chats
-teams-cli chats list --unread --format json            # Unread only
-teams-cli chats list --type "1:1" --format json        # 1:1 chats only
-teams-cli chats list --type group --format json        # Group chats only
-teams-cli chats list --limit 10 --format json          # Limit results
+teams-cli chats list --format json                           # All chats
+teams-cli chats list --unread --format json                   # Unread only
+teams-cli chats list --type "1:1" --format json               # 1:1 chats only
+teams-cli chats list --type group --format json               # Group chats only
+teams-cli chats list --limit 10 --format json                 # Limit results
+teams-cli chats list --offset 10 --limit 10 --format json     # Pagination
+teams-cli chats list --compact --format json                  # Omit members array
+teams-cli chats list --with "alice" --format json             # Find chats with a person
+teams-cli chats list --active-since 2024-01-01 --format json  # Filter by activity date
+teams-cli chats resolve user@company.com                      # Get DM chat ID from email
+teams-cli chats create --with user@company.com --format json  # Create new 1:1 chat
 ```
 
 ### Messages
 
 ```bash
-teams-cli messages list <chat-id> --format json        # Read messages (default 50)
-teams-cli messages list <chat-id> -n 20 --format json  # Last N messages
-teams-cli messages send <chat-id> "message text"       # Send by chat ID
-teams-cli messages send --to user@company.com "text"   # Send by email
-teams-cli messages search "query" --format json        # Search messages
-teams-cli messages search "query" --chat <id> --format json  # Search in specific chat
-```
-
-**Known issue: `--from` filter.** The `--from` flag may return empty results for group
-chats due to display name mismatches. Instead, fetch all messages and filter in
-post-processing:
-
-```bash
-teams-cli messages list <chat-id> -n 50 --format json 2>&1 | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-for m in data:
-    if 'alice' in m['from'].lower():
-        print(json.dumps(m))"
+teams-cli messages list <chat-id> --format json               # Read messages (default 50)
+teams-cli messages list --to user@company.com --format json    # Read by email
+teams-cli messages list <chat-id> -n 20 --format json         # Last N messages
+teams-cli messages list <chat-id> --mine --format json         # Only my messages
+teams-cli messages list <chat-id> --since 2024-01-01           # Since date
+teams-cli messages list <chat-id> --from "alice" --format json # Filter by sender
+teams-cli messages list <chat-id> --plain --format text        # Clean text output
+teams-cli messages list <chat-id> --before <time> --after <time> # Cursor pagination
+teams-cli messages send <chat-id> "message text"               # Send by chat ID
+teams-cli messages send --to user@company.com "text"           # Send by email (creates 1:1 if needed)
+teams-cli messages search "query" --format json                # Search messages
+teams-cli messages search "query" --chat <id> --format json    # Search in specific chat
+teams-cli messages mine --format json                          # My messages across chats
+teams-cli messages stats <chat-id> --format json               # Message count by sender
+teams-cli messages export <chat-id> -o chat.json               # Export chat history
 ```
 
 ### Teams & Channels
@@ -397,7 +399,15 @@ teams-cli channels list <team-id> --format json        # List channels in a team
 ### Users
 
 ```bash
-teams-cli users search user@company.com --format json  # Look up a user
+teams-cli users search user@company.com --format json  # Look up by email
+teams-cli users search "Alice Smith" --format json     # Look up by display name
+teams-cli users resolve "mri1,mri2" --format json     # Batch resolve MRIs
+```
+
+### Contacts
+
+```bash
+teams-cli contacts list --format json                  # All unique contacts from chats
 ```
 
 ### Output Formats
@@ -604,12 +614,22 @@ If a message touches on politics, religion, or controversial topics:
 |------|---------|
 | Check unreads | `teams-cli chats list --unread --format json` |
 | Read messages | `teams-cli messages list <chat-id> -n N --format json` |
+| Read by email | `teams-cli messages list --to email --format json` |
+| My messages | `teams-cli messages list <chat-id> --mine --format json` |
 | Send message | `teams-cli messages send <chat-id> "text"` |
 | Send by email | `teams-cli messages send --to email "text"` |
 | Search | `teams-cli messages search "query" --format json` |
+| Resolve email | `teams-cli chats resolve email` |
+| Create DM | `teams-cli chats create --with email --format json` |
+| Find chats with | `teams-cli chats list --with "name" --format json` |
+| Compact chats | `teams-cli chats list --compact --format json` |
+| Chat stats | `teams-cli messages stats <chat-id> --format json` |
+| Export chat | `teams-cli messages export <chat-id> -o file.json` |
+| All contacts | `teams-cli contacts list --format json` |
 | List teams | `teams-cli teams list --format json` |
 | List channels | `teams-cli channels list <team-id> --format json` |
-| Look up user | `teams-cli users search email --format json` |
+| Look up user | `teams-cli users search email-or-name --format json` |
+| Resolve MRIs | `teams-cli users resolve "mri1,mri2" --format json` |
 | My profile | `teams-cli me --format json` |
 | Auth status | `teams-cli status --format json` |
 | Re-auth | `teams-cli auth` |
