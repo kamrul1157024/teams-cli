@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/url"
+	"strings"
 
 	"github.com/kamrul1157024/teams-cli/teams-cli/auth"
 )
@@ -87,4 +88,93 @@ func (c *Client) GetMe() (*UserListItem, error) {
 		return nil, err
 	}
 	return c.GetUser(email)
+}
+
+// SearchUsersByName searches for users by display name across chat member lists.
+// The MiddleTier API only supports exact email lookup, so name search works by
+// scanning known chat members.
+func (c *Client) SearchUsersByName(name string) ([]UserListItem, error) {
+	convs, err := c.GetConversations()
+	if err != nil {
+		return nil, err
+	}
+
+	name = strings.ToLower(name)
+	seen := map[string]bool{}
+	var results []UserListItem
+
+	for _, chat := range convs.Chats {
+		for _, m := range chat.Members {
+			mri := m.Mri
+			if seen[mri] {
+				continue
+			}
+			friendlyName := strings.ToLower(m.FriendlyName)
+			if friendlyName != "" && strings.Contains(friendlyName, name) {
+				seen[mri] = true
+				results = append(results, UserListItem{
+					DisplayName: m.FriendlyName,
+					Mri:         mri,
+				})
+			}
+		}
+	}
+
+	// Try to enrich with email/details via user lookup for top results
+	for i := range results {
+		if i >= 5 {
+			break
+		}
+		// Extract object ID from MRI (8:orgid:<uuid>)
+		if parts := strings.SplitN(results[i].Mri, ":", 3); len(parts) == 3 {
+			// Can't look up by MRI directly, leave as-is
+		}
+	}
+
+	return results, nil
+}
+
+// SearchUsers tries email lookup first, falls back to name search
+func (c *Client) SearchUsers(query string) ([]UserListItem, error) {
+	// Try exact email lookup first
+	if strings.Contains(query, "@") {
+		user, err := c.GetUser(query)
+		if err == nil {
+			return []UserListItem{*user}, nil
+		}
+	}
+
+	// Fall back to name search across chat members
+	return c.SearchUsersByName(query)
+}
+
+// ResolveMRIs resolves multiple MRI strings to user info using chat member data
+func (c *Client) ResolveMRIs(mris []string) ([]UserListItem, error) {
+	convs, err := c.GetConversations()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build MRI -> name map from all chat members
+	nameMap := map[string]string{}
+	for _, chat := range convs.Chats {
+		for _, m := range chat.Members {
+			if m.FriendlyName != "" {
+				nameMap[m.Mri] = m.FriendlyName
+			}
+		}
+	}
+
+	var results []UserListItem
+	for _, mri := range mris {
+		name := nameMap[mri]
+		if name == "" {
+			name = mri
+		}
+		results = append(results, UserListItem{
+			DisplayName: name,
+			Mri:         mri,
+		})
+	}
+	return results, nil
 }

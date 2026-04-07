@@ -38,7 +38,22 @@ type MessageListItem struct {
 	Type    string `json:"type"`
 }
 
+type MessageListResponse struct {
+	Messages []MessageListItem      `json:"messages"`
+	Meta     map[string]interface{} `json:"_meta,omitempty"`
+}
+
+// GetMessagesOptions holds optional parameters for GetMessages
+type GetMessagesOptions struct {
+	Before string // Cursor: fetch messages before this time
+	After  string // Cursor: fetch messages after this time
+}
+
 func (c *Client) GetMessages(chatID string, limit int) ([]MessageListItem, error) {
+	return c.GetMessagesWithOptions(chatID, limit, GetMessagesOptions{})
+}
+
+func (c *Client) GetMessagesWithOptions(chatID string, limit int, opts GetMessagesOptions) ([]MessageListItem, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -48,7 +63,21 @@ func (c *Client) GetMessages(chatID string, limit int) ([]MessageListItem, error
 	q := u.Query()
 	q.Set("view", "msnp24Equivalent|supportsMessageProperties")
 	q.Set("pageSize", fmt.Sprintf("%d", limit))
-	q.Set("startTime", "1")
+
+	if opts.Before != "" {
+		// Use before time as endTime
+		if t, err := time.Parse(time.RFC3339Nano, opts.Before); err == nil {
+			q.Set("endTime", fmt.Sprintf("%d", t.UnixMilli()))
+		}
+		q.Set("startTime", "1")
+	} else if opts.After != "" {
+		// Use after time as startTime
+		if t, err := time.Parse(time.RFC3339Nano, opts.After); err == nil {
+			q.Set("startTime", fmt.Sprintf("%d", t.UnixMilli()))
+		}
+	} else {
+		q.Set("startTime", "1")
+	}
 	u.RawQuery = q.Encode()
 
 	var msgResp MessagesResponse
@@ -70,9 +99,15 @@ func (c *Client) GetMessages(chatID string, limit int) ([]MessageListItem, error
 			continue
 		}
 
+		from := msg.ImDisplayName
+		if from == "" {
+			// Fall back to MRI-based from field
+			from = msg.From
+		}
+
 		item := MessageListItem{
 			ID:      msg.Id,
-			From:    msg.ImDisplayName,
+			From:    from,
 			Content: stripHTML(msg.Content),
 			Time:    msg.ComposeTime,
 			Type:    msg.MessageType,
@@ -102,6 +137,7 @@ type SendResult struct {
 	MessageID string `json:"message_id"`
 	ChatID    string `json:"chat_id"`
 	Time      string `json:"time"`
+	Content   string `json:"content,omitempty"`
 }
 
 func (c *Client) SendMessage(chatID string, content string) (*SendResult, error) {

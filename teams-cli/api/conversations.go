@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kamrul1157024/teams-cli/teams-cli/auth"
@@ -106,18 +107,26 @@ func (c *Client) GetConversations() (*ConversationResponse, error) {
 
 // ChatListItem is a simplified view of a chat for list output
 type ChatListItem struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Type        string   `json:"type"`
-	IsRead      bool     `json:"is_read"`
-	LastMessage *ChatLastMsg `json:"last_message,omitempty"`
-	Members     []string `json:"members,omitempty"`
+	ID                string       `json:"id"`
+	Title             string       `json:"title"`
+	Type              string       `json:"type"`
+	IsRead            bool         `json:"is_read"`
+	MemberCount       int          `json:"member_count"`
+	LastMessage       *ChatLastMsg `json:"last_message,omitempty"`
+	LastMessageFromMe bool         `json:"last_message_from_me"`
+	Members           []string     `json:"members,omitempty"`
 }
 
 type ChatLastMsg struct {
 	From    string `json:"from"`
 	Content string `json:"content"`
 	Time    string `json:"time"`
+}
+
+// ChatListResponse wraps the chat list with pagination metadata
+type ChatListResponse struct {
+	Chats []ChatListItem         `json:"chats"`
+	Meta  map[string]interface{} `json:"_meta"`
 }
 
 func chatType(chat Chat) string {
@@ -127,31 +136,103 @@ func chatType(chat Chat) string {
 	return "group"
 }
 
+// ChatListOptions holds all filtering options for ListChats
+type ChatListOptions struct {
+	FilterType  string
+	UnreadOnly  bool
+	Limit       int
+	Offset      int
+	Compact     bool
+	WithPerson  string
+	ActiveSince string
+}
+
 func (c *Client) ListChats(filterType string, unreadOnly bool, limit int) ([]ChatListItem, error) {
+	return c.ListChatsWithOptions(ChatListOptions{
+		FilterType: filterType,
+		UnreadOnly: unreadOnly,
+		Limit:      limit,
+	})
+}
+
+func (c *Client) ListChatsWithOptions(opts ChatListOptions) ([]ChatListItem, error) {
 	convs, err := c.GetConversations()
 	if err != nil {
 		return nil, err
 	}
 
+	// Parse active-since date if provided
+	var activeSince time.Time
+	if opts.ActiveSince != "" {
+		for _, layout := range []string{"2006-01-02", "2006-01-02T15:04:05Z", time.RFC3339} {
+			if t, err := time.Parse(layout, opts.ActiveSince); err == nil {
+				activeSince = t
+				break
+			}
+		}
+	}
+
+	withPerson := strings.ToLower(opts.WithPerson)
+
+	// Build name map from message senders for resolving MRI members
+	nameMap := buildNameMap(convs.Chats)
+
+	// Get current user email for last_message_from_me
+	myEmail, _ := auth.GetEmail()
+	myEmailLower := strings.ToLower(myEmail)
+
 	var items []ChatListItem
+	skipped := 0
+
 	for _, chat := range convs.Chats {
 		if chat.Hidden {
 			continue
 		}
 
 		ct := chatType(chat)
-		if filterType != "" && ct != filterType {
+		if opts.FilterType != "" && ct != opts.FilterType {
 			continue
 		}
-		if unreadOnly && chat.IsRead {
+		if opts.UnreadOnly && chat.IsRead {
+			continue
+		}
+
+		// Filter by active-since
+		if !activeSince.IsZero() && chat.LastMessage.ComposeTime != "" {
+			if msgTime, err := time.Parse(time.RFC3339Nano, chat.LastMessage.ComposeTime); err == nil {
+				if msgTime.Before(activeSince) {
+					continue
+				}
+			}
+		}
+
+		// Filter by --with person
+		if withPerson != "" {
+			found := false
+			for _, m := range chat.Members {
+				name := strings.ToLower(resolveName(m, nameMap))
+				if strings.Contains(name, withPerson) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		// Handle offset
+		if opts.Offset > 0 && skipped < opts.Offset {
+			skipped++
 			continue
 		}
 
 		item := ChatListItem{
-			ID:     chat.Id,
-			Title:  chat.Title,
-			Type:   ct,
-			IsRead: chat.IsRead,
+			ID:          chat.Id,
+			Title:       chat.Title,
+			Type:        ct,
+			IsRead:      chat.IsRead,
+			MemberCount: len(chat.Members),
 		}
 
 		if chat.LastMessage.Content != "" {
@@ -160,29 +241,70 @@ func (c *Client) ListChats(filterType string, unreadOnly bool, limit int) ([]Cha
 				Content: stripHTML(chat.LastMessage.Content),
 				Time:    chat.LastMessage.ComposeTime,
 			}
+			// Check if last message is from the current user
+			if myEmailLower != "" {
+				lastFrom := strings.ToLower(chat.LastMessage.ImDisplayName)
+				if strings.Contains(lastFrom, myEmailLower) || strings.Contains(strings.ToLower(chat.LastMessage.From), myEmailLower) {
+					item.LastMessageFromMe = true
+				}
+			}
 		}
 
-		for _, m := range chat.Members {
-			if m.FriendlyName != "" {
-				item.Members = append(item.Members, m.FriendlyName)
-			} else {
-				item.Members = append(item.Members, m.Mri)
+		if !opts.Compact {
+			for _, m := range chat.Members {
+				item.Members = append(item.Members, resolveName(m, nameMap))
 			}
 		}
 
 		// If no title, build from members
-		if item.Title == "" && len(item.Members) > 0 {
-			item.Title = joinNames(item.Members, 3)
+		if item.Title == "" {
+			if opts.Compact {
+				// Resolve names just for title
+				var names []string
+				for _, m := range chat.Members {
+					names = append(names, resolveName(m, nameMap))
+				}
+				item.Title = joinNames(names, 3)
+			} else if len(item.Members) > 0 {
+				item.Title = joinNames(item.Members, 3)
+			}
 		}
 
 		items = append(items, item)
 
-		if limit > 0 && len(items) >= limit {
+		if opts.Limit > 0 && len(items) >= opts.Limit {
 			break
 		}
 	}
 
 	return items, nil
+}
+
+// buildNameMap creates a map of MRI -> display name from chat message senders
+func buildNameMap(chats []Chat) map[string]string {
+	m := map[string]string{}
+	for _, chat := range chats {
+		if chat.LastMessage.ImDisplayName != "" && chat.LastMessage.From != "" {
+			m[chat.LastMessage.From] = chat.LastMessage.ImDisplayName
+		}
+		for _, member := range chat.Members {
+			if member.FriendlyName != "" {
+				m[member.Mri] = member.FriendlyName
+			}
+		}
+	}
+	return m
+}
+
+// resolveName returns a human-readable name for a chat member
+func resolveName(m ChatMember, nameMap map[string]string) string {
+	if m.FriendlyName != "" {
+		return m.FriendlyName
+	}
+	if name, ok := nameMap[m.Mri]; ok {
+		return name
+	}
+	return m.Mri
 }
 
 // TeamListItem is a simplified view of a team for list output
