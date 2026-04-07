@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/kamrul1157024/teams-cli/teams-cli/auth"
 )
 
@@ -121,7 +120,7 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 		Content:         content,
 		MessageType:     "RichText/Html",
 		ContentType:     "text",
-		ClientMessageId: uuid.New().String(),
+		ClientMessageId: fmt.Sprintf("%d", time.Now().UnixNano()/1e6),
 		ImDisplayName:   displayName,
 		Properties: map[string]interface{}{
 			"importance": "",
