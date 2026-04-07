@@ -1,0 +1,11 @@
+{
+  "name": "teams-cli-skills",
+  "description": "Claude Code skill for Microsoft Teams CLI. Read, send, search messages, manage chats, teams, and channels from your terminal via teams-cli.",
+  "version": "1.0.0",
+  "author": {
+    "name": "kamrul1157024"
+  },
+  "repository": "https://github.com/kamrul1157024/teams-cli",
+  "keywords": ["teams", "microsoft-teams", "messaging", "cli", "chat"],
+  "skills": "./skills/"
+}

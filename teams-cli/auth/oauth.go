@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	webview "github.com/webview/webview_go"
@@ -28,10 +29,12 @@ func getLoginURL(t TokenType, tenantID string) string {
 		q.Set("response_type", "token")
 		q.Set("state", state+"|"+SkypeResource)
 		q.Set("resource", SkypeResource)
+		q.Set("prompt", "none") // Silent SSO — user already authenticated
 	case TokenChatSvcAgg:
 		q.Set("response_type", "token")
 		q.Set("state", state+"|"+ChatSvcAggResource)
 		q.Set("resource", ChatSvcAggResource)
+		q.Set("prompt", "none") // Silent SSO — user already authenticated
 	}
 
 	q.Set("client_id", TeamsAppID)
@@ -66,6 +69,22 @@ func RunOAuth() (*AuthResult, error) {
 	redirectCount := 0
 	var result AuthResult
 	var authErr error
+
+	// navigateNext dispatches the next token URL with a small delay
+	// to allow the Init JS to load on the new page
+	navigateNext := func(nextURL string) {
+		w.Dispatch(func() {
+			// Navigate to a blank page first to reset, then to the target
+			// This ensures Init JS is injected before the redirect happens
+			w.Navigate("about:blank")
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				w.Dispatch(func() {
+					w.Navigate(nextURL)
+				})
+			}()
+		})
+	}
 
 	w.Bind("goHandleNavigation", func(currentURL string) {
 		if !strings.HasPrefix(currentURL, "https://teams.microsoft.com/go#") {
@@ -123,20 +142,31 @@ func RunOAuth() (*AuthResult, error) {
 				return
 			}
 			gotTokens[TokenTeams] = true
+			fmt.Println("  Got teams token")
 			tenant := currentTenant
 			if tenant == "" {
 				tenant = "common"
 			}
-			w.Dispatch(func() { w.Navigate(getLoginURL(TokenSkype, tenant)) })
+			navigateNext(getLoginURL(TokenSkype, tenant))
 
 		} else if aud == SkypeResource && !gotTokens[TokenSkype] {
+			// Save the Skype Spaces Bearer token first
 			if err := SaveToken(token, TokenSkype); err != nil {
 				authErr = fmt.Errorf("failed to save skype token: %w", err)
 				w.Dispatch(func() { w.Terminate() })
 				return
 			}
+			// Exchange for the real skypeToken via authz endpoint
+			// The messages API needs this token, not the Bearer token
+			_, refreshErr := RefreshSkypeToken()
+			if refreshErr != nil {
+				fmt.Printf("  Warning: skype token exchange failed: %v\n", refreshErr)
+				// Continue anyway — the Bearer token is saved and can be exchanged later
+			} else {
+				fmt.Println("  Got skype token (exchanged via authz)")
+			}
 			gotTokens[TokenSkype] = true
-			w.Dispatch(func() { w.Navigate(getLoginURL(TokenChatSvcAgg, currentTenant)) })
+			navigateNext(getLoginURL(TokenChatSvcAgg, currentTenant))
 
 		} else if aud == ChatSvcAggResource && !gotTokens[TokenChatSvcAgg] {
 			if err := SaveToken(token, TokenChatSvcAgg); err != nil {
@@ -145,20 +175,37 @@ func RunOAuth() (*AuthResult, error) {
 				return
 			}
 			gotTokens[TokenChatSvcAgg] = true
-			w.Dispatch(func() { w.Terminate() })
+			fmt.Println("  Got chatsvcagg token")
+			w.Dispatch(func() {
+				w.SetTitle("Teams CLI - Login Complete")
+				w.Navigate("about:blank")
+				w.Eval(`document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;font-size:24px;color:#333;">Authentication complete. Closing...</div>';`)
+				go func() {
+					time.Sleep(500 * time.Millisecond)
+					w.Dispatch(func() { w.Terminate() })
+				}()
+			})
 		}
 	})
 
+	// Init JS runs on every new page navigation in webview
 	w.Init(`
 		(function() {
 			var lastUrl = '';
-			setInterval(function() {
+			function check() {
 				var u = window.location.href;
 				if (u !== lastUrl) {
 					lastUrl = u;
-					goHandleNavigation(u);
+					try { goHandleNavigation(u); } catch(e) {}
 				}
-			}, 100);
+			}
+			// Poll frequently to catch fast SSO redirects
+			setInterval(check, 30);
+			// Also listen for hash changes and history API
+			window.addEventListener('hashchange', check);
+			window.addEventListener('popstate', check);
+			// Check immediately on load
+			check();
 		})();
 	`)
 

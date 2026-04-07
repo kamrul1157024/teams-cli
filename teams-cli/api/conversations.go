@@ -121,7 +121,7 @@ type ChatLastMsg struct {
 }
 
 func chatType(chat Chat) string {
-	if chat.IsOneOnOne {
+	if chat.IsOneOnOne || chat.ChatType == "oneOnOne" || len(chat.Members) == 2 {
 		return "1:1"
 	}
 	return "group"

@@ -1,0 +1,17 @@
+{
+  "name": "teams-cli-marketplace",
+  "owner": {
+    "name": "kamrul1157024"
+  },
+  "metadata": {
+    "description": "Microsoft Teams CLI skill for Claude Code — read, send, search messages, manage chats, teams, and channels"
+  },
+  "plugins": [
+    {
+      "name": "teams-cli-skills",
+      "source": "./",
+      "description": "Skill: teams — interactive Microsoft Teams assistant using teams-cli. Read messages, send messages, search conversations, list teams and channels, look up users.",
+      "version": "1.0.0"
+    }
+  ]
+}
