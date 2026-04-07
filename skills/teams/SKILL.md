@@ -367,6 +367,23 @@ teams-cli status --format json    # Check token health
 teams-cli me --format json        # Current user profile
 ```
 
+### Configuration
+
+```bash
+teams-cli config show --format json        # Show all config
+teams-cli config signature on              # Enable "sent via claude" signature
+teams-cli config signature off             # Disable signature
+teams-cli config signature set "custom"    # Set custom signature text
+```
+
+**Message signature:** By default, all messages sent via the CLI are appended with
+`— sent via claude 🤖`. This lets recipients know the message was composed with AI
+assistance. The user can ask to turn it on/off:
+
+- "Turn off the claude signature" → run `teams-cli config signature off`
+- "Turn it back on" → run `teams-cli config signature on`
+- "Change the signature to ..." → run `teams-cli config signature set "new text"`
+
 ### Chats
 
 ```bash
@@ -648,6 +665,10 @@ If a message touches on politics, religion, or controversial topics:
 | Auth status | `teams-cli status --format json` |
 | Re-auth | `teams-cli auth` |
 | Clear cache | `teams-cli cache clear` |
+| Show config | `teams-cli config show --format json` |
+| Signature on | `teams-cli config signature on` |
+| Signature off | `teams-cli config signature off` |
+| Set signature | `teams-cli config signature set "text"` |
 
 ## Error Handling
 

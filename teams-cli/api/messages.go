@@ -147,6 +147,12 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 		displayName = email
 	}
 
+	// Append signature if enabled
+	cfg := LoadConfig()
+	if cfg.SignatureEnabled && cfg.Signature != "" {
+		content = content + "\n— " + cfg.Signature
+	}
+
 	// Wrap plain text in HTML
 	if !strings.HasPrefix(content, "<") {
 		content = "<p>" + content + "</p>"
