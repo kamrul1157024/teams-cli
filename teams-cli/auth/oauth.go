@@ -150,18 +150,23 @@ func RunOAuth() (*AuthResult, error) {
 			navigateNext(getLoginURL(TokenSkype, tenant))
 
 		} else if aud == SkypeResource && !gotTokens[TokenSkype] {
-			// Save the Skype Spaces Bearer token first
+			// Save the Skype Spaces Bearer token (used by MiddleTier/users API)
+			if err := SaveToken(token, TokenSkypeSpaces); err != nil {
+				authErr = fmt.Errorf("failed to save skype spaces token: %w", err)
+				w.Dispatch(func() { w.Terminate() })
+				return
+			}
+			// Also save as skype.jwt temporarily so RefreshSkypeToken can read it
 			if err := SaveToken(token, TokenSkype); err != nil {
 				authErr = fmt.Errorf("failed to save skype token: %w", err)
 				w.Dispatch(func() { w.Terminate() })
 				return
 			}
 			// Exchange for the real skypeToken via authz endpoint
-			// The messages API needs this token, not the Bearer token
+			// The Messages API needs this exchanged token, not the Bearer token
 			_, refreshErr := RefreshSkypeToken()
 			if refreshErr != nil {
 				fmt.Printf("  Warning: skype token exchange failed: %v\n", refreshErr)
-				// Continue anyway — the Bearer token is saved and can be exchanged later
 			} else {
 				fmt.Println("  Got skype token (exchanged via authz)")
 			}

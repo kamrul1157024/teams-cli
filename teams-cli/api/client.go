@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/kamrul1157024/teams-cli/teams-cli/auth"
@@ -38,9 +37,11 @@ func (c *Client) doRequest(method, url string, body io.Reader, tokenType auth.To
 		return nil, err
 	}
 
-	if tokenType == auth.TokenSkype && strings.HasPrefix(url, MessagesBase) {
+	if tokenType == auth.TokenSkype {
+		// The skype token is an exchanged skypetoken, always use skypetoken= format
 		req.Header.Set("Authentication", "skypetoken="+token)
 	} else {
+		// Bearer token for ChatSvcAgg, SkypeSpaces (MiddleTier), etc.
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 

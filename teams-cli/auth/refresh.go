@@ -19,9 +19,14 @@ type AuthzResponse struct {
 }
 
 func RefreshSkypeToken() (string, error) {
-	raw, err := LoadToken(TokenSkype)
+	// Use the original Skype Spaces Bearer token for the authz exchange
+	raw, err := LoadToken(TokenSkypeSpaces)
 	if err != nil {
-		return "", fmt.Errorf("cannot load skype token for refresh: %w", err)
+		// Fall back to skype token if skype-spaces doesn't exist (legacy)
+		raw, err = LoadToken(TokenSkype)
+		if err != nil {
+			return "", fmt.Errorf("cannot load skype token for refresh: %w", err)
+		}
 	}
 
 	req, err := http.NewRequest("POST", "https://teams.microsoft.com/api/authsvc/v1.0/authz", nil)
@@ -69,9 +74,14 @@ func EnsureValidToken(t TokenType) (string, error) {
 		return info.Raw, nil
 	}
 
-	// Token expired or expiring soon
+	// Token expired or expiring soon — try refresh
 	if t == TokenSkype {
 		return RefreshSkypeToken()
+	}
+
+	// SkypeSpaces uses the same underlying token, can't refresh independently
+	if t == TokenSkypeSpaces {
+		return "", fmt.Errorf("token %s expired (run 'teams-cli auth' to re-authenticate)", t)
 	}
 
 	return "", fmt.Errorf("token %s expired (run 'teams-cli auth' to re-authenticate)", t)

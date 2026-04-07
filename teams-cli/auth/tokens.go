@@ -13,9 +13,10 @@ import (
 type TokenType string
 
 const (
-	TokenTeams      TokenType = "teams"
-	TokenSkype      TokenType = "skype"
-	TokenChatSvcAgg TokenType = "chatsvcagg"
+	TokenTeams       TokenType = "teams"
+	TokenSkype       TokenType = "skype"
+	TokenSkypeSpaces TokenType = "skype-spaces" // Original Bearer token for MiddleTier API
+	TokenChatSvcAgg  TokenType = "chatsvcagg"
 )
 
 type TokenInfo struct {

@@ -54,7 +54,7 @@ func (c *Client) GetUser(email string) (*UserListItem, error) {
 	u.RawQuery = q.Encode()
 
 	var resp UserResponse
-	if err := c.getJSON(u.String(), auth.TokenSkype, &resp); err != nil {
+	if err := c.getJSON(u.String(), auth.TokenSkypeSpaces, &resp); err != nil {
 		return nil, err
 	}
 
