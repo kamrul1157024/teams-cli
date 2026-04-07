@@ -97,11 +97,19 @@ type ConversationResponse struct {
 }
 
 func (c *Client) GetConversations() (*ConversationResponse, error) {
+	key := cacheKey("convs")
+	var cached ConversationResponse
+	if c.cacheGet(key, &cached) {
+		return &cached, nil
+	}
+
 	url := ChatSvcAggBase + "teams/users/me?isPrefetch=false&enableMembershipSummary=true"
 	var result ConversationResponse
 	if err := c.getJSON(url, auth.TokenChatSvcAgg, &result); err != nil {
 		return nil, err
 	}
+
+	c.cacheSet(key, &result, TTLConversations)
 	return &result, nil
 }
 
@@ -156,6 +164,11 @@ func (c *Client) ListChats(filterType string, unreadOnly bool, limit int) ([]Cha
 }
 
 func (c *Client) ListChatsWithOptions(opts ChatListOptions) ([]ChatListItem, error) {
+	// Unread queries must bypass cache — stale unread state is misleading
+	if opts.UnreadOnly {
+		c.CacheInvalidate("convs")
+	}
+
 	convs, err := c.GetConversations()
 	if err != nil {
 		return nil, err

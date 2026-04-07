@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/kamrul1157024/teams-cli/teams-cli/api"
 	"github.com/kamrul1157024/teams-cli/teams-cli/output"
 	"github.com/spf13/cobra"
 )
@@ -12,7 +11,7 @@ var meCmd = &cobra.Command{
 	Use:   "me",
 	Short: "Show current user profile",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		user, err := client.GetMe()
 		if err != nil {
 			return fmt.Errorf("failed to get user profile: %w", err)

@@ -45,7 +45,7 @@ Examples:
   teams-cli messages list --to john@company.com
   teams-cli messages list 19:abc@thread.v2 --mine --since 2024-01-01`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 
 		var chatID string
 		if listTo != "" {
@@ -164,7 +164,7 @@ Examples:
   teams-cli messages send --to john@company.com "Hello"
   echo "Build passed" | teams-cli messages send 19:abc@thread.v2`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 
 		var chatID, message string
 
@@ -228,7 +228,7 @@ var messagesSearchCmd = &cobra.Command{
 	Short: "Search messages across conversations",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		results, err := client.SearchMessages(args[0], searchChat, searchLimit)
 		if err != nil {
 			return fmt.Errorf("failed to search messages: %w", err)
@@ -263,7 +263,7 @@ var messagesMineCmd = &cobra.Command{
 	Use:   "mine",
 	Short: "Fetch your own messages across recent chats",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 
 		email, err := auth.GetEmail()
 		if err != nil {
@@ -313,7 +313,7 @@ var messagesExportCmd = &cobra.Command{
 	Short: "Export chat history to a file",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		messages, err := client.GetMessages(args[0], msgLimit)
 		if err != nil {
 			return fmt.Errorf("failed to get messages: %w", err)
@@ -346,7 +346,7 @@ var contactsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all unique contacts from your chats",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		chats, err := client.ListChats("", false, 0)
 		if err != nil {
 			return fmt.Errorf("failed to list chats: %w", err)
@@ -392,7 +392,7 @@ var messagesStatsCmd = &cobra.Command{
 	Short: "Show message statistics for a chat",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		messages, err := client.GetMessages(args[0], msgLimit)
 		if err != nil {
 			return fmt.Errorf("failed to get messages: %w", err)

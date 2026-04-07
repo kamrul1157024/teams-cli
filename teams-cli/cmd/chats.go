@@ -28,7 +28,7 @@ var chatsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List conversations",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		chats, err := client.ListChatsWithOptions(api.ChatListOptions{
 			FilterType:  chatFilterType,
 			UnreadOnly:  chatUnread,
@@ -81,7 +81,7 @@ var chatsResolveCmd = &cobra.Command{
 	Short: "Resolve an email to a DM chat ID",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		chatID, err := client.FindChatByEmail(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to resolve chat: %w", err)
@@ -107,7 +107,7 @@ var chatsCreateCmd = &cobra.Command{
 		if createWith == "" {
 			return fmt.Errorf("--with <email> is required")
 		}
-		client := api.NewClient()
+		client := newClient()
 
 		// Look up user to get MRI
 		user, err := client.GetUser(createWith)

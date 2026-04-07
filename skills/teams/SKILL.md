@@ -49,30 +49,44 @@ If the profile exists, proceed to what the user asked for.
 
 ---
 
-## Chat ID Cache
+## Built-in Cache
 
-Maintain a local cache at `~/.teams-agent/cache/chats.json` to avoid re-fetching the full
-chat list every time. Format:
+The CLI has a built-in file-based cache at `~/.config/teams-cli/cache/`. This means you
+do NOT need to maintain your own cache in `~/.teams-agent/` — the CLI handles it.
 
-```json
-{
-  "updated_at": "2026-04-08T10:00:00Z",
-  "by_name": {"Alice Smith": "19:xxx@thread.v2", "DevOps Team": "19:yyy@thread.v2"},
-  "by_email": {"alice@company.com": "19:xxx@thread.v2"}
-}
+**What is cached (and TTLs):**
+
+| Data | TTL | Notes |
+|------|-----|-------|
+| Conversations (chats list) | 5 min | Auto-invalidated on send/create |
+| User info (users search) | 1 hour | Name, email, MRI, department |
+| Own profile (me) | 1 hour | Very stable |
+| Chat ID resolution (chats resolve) | 10 min | Email → chat ID mapping |
+| Teams/channels | 30 min | Team structure |
+
+**What is NEVER cached:**
+
+- `messages list` — always fetches fresh messages
+- `chats list --unread` — always bypasses cache for fresh unread state
+- `messages search` — always searches live
+- `messages send` — invalidates conversations cache after sending
+
+**Cache control flags:**
+
+```bash
+teams-cli chats list --no-cache --format json     # Bypass cache this time
+teams-cli chats list --refresh --format json       # Ignore cache, write fresh
+teams-cli cache clear                              # Delete all cached data
 ```
 
-**Lookup order when resolving a recipient:**
+**Why this matters for the skill:** Since the CLI caches user lookups, chat resolution,
+and conversation lists, the skill doesn't need to cache these. Just call the commands
+normally — repeated calls within the TTL window are instant from cache. Use `--no-cache`
+when you need guaranteed-fresh data (e.g., checking if a new message arrived).
 
-1. Check `~/.teams-agent/cache/chats.json` (name or email match)
-2. Check `~/.teams-agent/contacts/<name>.md` for stored chat IDs
-3. Fall back to `teams-cli chats list --format json` API call
-
-**Cache refresh rules:**
-- Rebuild if cache is older than 24 hours
-- Rebuild if a name/email lookup misses in cache
-- After rebuild, write updated timestamp
-- Build cache during initial profile setup (Step 1)
+**People also chat via Teams UI:** If someone sends a message through the desktop/web app,
+the conversations cache (5 min TTL) will pick it up on the next call. For `--unread`
+queries, the cache is always bypassed to avoid showing stale read/unread state.
 
 ---
 
@@ -633,6 +647,7 @@ If a message touches on politics, religion, or controversial topics:
 | My profile | `teams-cli me --format json` |
 | Auth status | `teams-cli status --format json` |
 | Re-auth | `teams-cli auth` |
+| Clear cache | `teams-cli cache clear` |
 
 ## Error Handling
 

@@ -176,6 +176,9 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 		return nil, err
 	}
 
+	// Invalidate conversations cache — unread state and last message changed
+	c.CacheInvalidate("convs")
+
 	return &SendResult{
 		Status:    "sent",
 		MessageID: resp.Id,
@@ -188,6 +191,13 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 // It prefers true 1:1 chats over meeting chats, and falls back to creating
 // a new 1:1 chat if none exists.
 func (c *Client) FindChatByEmail(email string) (string, error) {
+	// Check cache for email -> chat ID mapping
+	key := cacheKey("resolve", strings.ToLower(email))
+	var cachedID string
+	if c.cacheGet(key, &cachedID) {
+		return cachedID, nil
+	}
+
 	// Look up the user to get their MRI (MRIs are UUIDs, not emails)
 	user, err := c.GetUser(email)
 	if err != nil {
@@ -214,6 +224,7 @@ func (c *Client) FindChatByEmail(email string) (string, error) {
 			if mri == targetMri || strings.Contains(mri, email) {
 				// Prefer non-meeting chats
 				if !strings.Contains(chat.Id, "meeting_") {
+					c.cacheSet(key, chat.Id, TTLResolveChat)
 					return chat.Id, nil
 				}
 				// Keep meeting chat as fallback
@@ -225,6 +236,7 @@ func (c *Client) FindChatByEmail(email string) (string, error) {
 	}
 
 	if fallbackChatID != "" {
+		c.cacheSet(key, fallbackChatID, TTLResolveChat)
 		return fallbackChatID, nil
 	}
 
@@ -279,6 +291,7 @@ func (c *Client) CreateOneOnOneChat(targetMri string) (string, error) {
 		if len(parts) > 0 {
 			threadID := parts[len(parts)-1]
 			if threadID != "" {
+				c.invalidateAfterChatCreate(threadID)
 				return threadID, nil
 			}
 		}
@@ -288,11 +301,17 @@ func (c *Client) CreateOneOnOneChat(targetMri string) (string, error) {
 	var createResp map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&createResp); err == nil {
 		if id, ok := createResp["id"].(string); ok && id != "" {
+			c.invalidateAfterChatCreate(id)
 			return id, nil
 		}
 	}
 
 	return "", fmt.Errorf("chat created but could not determine chat ID")
+}
+
+func (c *Client) invalidateAfterChatCreate(chatID string) {
+	// New chat created — invalidate conversations and resolve caches
+	c.CacheInvalidate("convs", "resolve")
 }
 
 // SearchMessages searches messages across conversations

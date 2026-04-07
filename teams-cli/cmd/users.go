@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kamrul1157024/teams-cli/teams-cli/api"
 	"github.com/kamrul1157024/teams-cli/teams-cli/output"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +18,7 @@ var usersSearchCmd = &cobra.Command{
 	Short: "Look up a user by email or display name",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		users, err := client.SearchUsers(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to find user: %w", err)
@@ -68,7 +67,7 @@ var usersResolveCmd = &cobra.Command{
 	Short: "Resolve MRI strings to user names (comma-separated)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := api.NewClient()
+		client := newClient()
 		mris := strings.Split(args[0], ",")
 		for i := range mris {
 			mris[i] = strings.TrimSpace(mris[i])

@@ -17,12 +17,21 @@ const (
 )
 
 type Client struct {
-	http *http.Client
+	http  *http.Client
+	cache CacheConfig
 }
 
 func NewClient() *Client {
 	return &Client{
-		http: &http.Client{Timeout: 60 * time.Second},
+		http:  &http.Client{Timeout: 60 * time.Second},
+		cache: CacheConfig{Enabled: true},
+	}
+}
+
+func NewClientWithCache(cfg CacheConfig) *Client {
+	return &Client{
+		http:  &http.Client{Timeout: 60 * time.Second},
+		cache: cfg,
 	}
 }
 

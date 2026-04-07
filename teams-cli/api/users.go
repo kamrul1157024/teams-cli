@@ -45,6 +45,12 @@ type UserListItem struct {
 }
 
 func (c *Client) GetUser(email string) (*UserListItem, error) {
+	key := cacheKey("user", strings.ToLower(email))
+	var cached UserListItem
+	if c.cacheGet(key, &cached) {
+		return &cached, nil
+	}
+
 	u, _ := url.Parse(MiddleTierBase + "users/" + url.PathEscape(email) + "/")
 	q := u.Query()
 	q.Set("throwIfNotFound", "false")
@@ -72,22 +78,37 @@ func (c *Client) GetUser(email string) (*UserListItem, error) {
 		phone = resp.Value.TelephoneNumber
 	}
 
-	return &UserListItem{
+	result := &UserListItem{
 		DisplayName: resp.Value.DisplayName,
 		Email:       emailAddr,
 		JobTitle:    resp.Value.JobTitle,
 		Department:  resp.Value.Department,
 		Mri:         resp.Value.Mri,
 		Phone:       phone,
-	}, nil
+	}
+
+	c.cacheSet(key, result, TTLUser)
+	return result, nil
 }
 
 func (c *Client) GetMe() (*UserListItem, error) {
+	key := cacheKey("me")
+	var cached UserListItem
+	if c.cacheGet(key, &cached) {
+		return &cached, nil
+	}
+
 	email, err := auth.GetEmail()
 	if err != nil {
 		return nil, err
 	}
-	return c.GetUser(email)
+	result, err := c.GetUser(email)
+	if err != nil {
+		return nil, err
+	}
+
+	c.cacheSet(key, result, TTLMe)
+	return result, nil
 }
 
 // SearchUsersByName searches for users by display name across chat member lists.
