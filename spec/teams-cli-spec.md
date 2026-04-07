@@ -20,36 +20,48 @@
 
 ---
 
-## Architecture
+## Repository Structure
 
 ```
-teams-cli/
-├── main.go                 # Entry point
-├── cmd/                    # Cobra command definitions
-│   ├── root.go             # Root command, global flags
-│   ├── auth.go             # OAuth login flow (webview)
-│   ├── status.go           # Token health check
-│   ├── me.go               # Current user info
-│   ├── chats.go            # List/filter conversations
-│   ├── messages.go         # Read/send/search messages
-│   ├── teams.go            # List teams
-│   ├── channels.go         # List channels in a team
-│   └── users.go            # Search/lookup users
-├── auth/                   # Authentication layer
-│   ├── oauth.go            # Webview OAuth flow
-│   ├── tokens.go           # Token read/write/validate
-│   └── refresh.go          # Token refresh via authz endpoint
-├── api/                    # Teams API client
-│   ├── client.go           # HTTP client, auth headers
-│   ├── conversations.go    # Chat/conversation endpoints
-│   ├── messages.go         # Message read/send endpoints
-│   ├── users.go            # User lookup endpoints
-│   └── teams.go            # Teams/channels endpoints
-├── output/                 # Output formatting
-│   ├── json.go             # JSON output (default)
-│   ├── table.go            # Table output
-│   └── text.go             # Plain text output
-└── go.mod
+repo root/
+├── spec/
+│   └── teams-cli-spec.md           # This file
+├── teams-cli/                      # All Go source code
+│   ├── main.go                     # Entry point
+│   ├── go.mod
+│   ├── go.sum
+│   ├── cmd/                        # Cobra command definitions
+│   │   ├── root.go                 # Root command, global flags
+│   │   ├── auth.go                 # teams-cli auth
+│   │   ├── status.go               # teams-cli status
+│   │   ├── me.go                   # teams-cli me
+│   │   ├── chats.go                # teams-cli chats list
+│   │   ├── messages.go             # teams-cli messages list/send/search
+│   │   ├── teams.go                # teams-cli teams list
+│   │   ├── channels.go             # teams-cli channels list
+│   │   └── users.go                # teams-cli users search
+│   ├── auth/                       # Authentication layer
+│   │   ├── oauth.go                # Webview OAuth flow
+│   │   ├── tokens.go               # Token read/write/validate
+│   │   └── refresh.go              # Token refresh via authz endpoint
+│   ├── api/                        # Teams API HTTP client
+│   │   ├── client.go               # Base client, auth headers, retry
+│   │   ├── conversations.go        # Chat/conversation endpoints
+│   │   ├── messages.go             # Message read/send endpoints
+│   │   ├── users.go                # User lookup endpoints
+│   │   └── teams.go                # Teams/channels endpoints
+│   └── output/                     # Output formatting
+│       ├── json.go                 # JSON output (default)
+│       ├── table.go                # Table output
+│       └── text.go                 # Plain text output
+├── .gitignore
+└── README.md
+```
+
+### Build
+
+```bash
+cd teams-cli && go build -o teams-cli .
 ```
 
 ---
