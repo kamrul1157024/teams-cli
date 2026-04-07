@@ -148,27 +148,115 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 	}, nil
 }
 
-// FindChatByEmail finds a 1:1 chat with the given email
+// FindChatByEmail finds a 1:1 chat with the given email.
+// It prefers true 1:1 chats over meeting chats, and falls back to creating
+// a new 1:1 chat if none exists.
 func (c *Client) FindChatByEmail(email string) (string, error) {
+	// Look up the user to get their MRI (MRIs are UUIDs, not emails)
+	user, err := c.GetUser(email)
+	if err != nil {
+		return "", fmt.Errorf("cannot find user %s: %w", email, err)
+	}
+
 	convs, err := c.GetConversations()
 	if err != nil {
 		return "", err
 	}
 
+	targetMri := strings.ToLower(user.Mri)
 	email = strings.ToLower(email)
+	var fallbackChatID string
+
 	for _, chat := range convs.Chats {
-		if !chat.IsOneOnOne {
+		isOneOnOne := chat.IsOneOnOne || chat.ChatType == "oneOnOne" || len(chat.Members) == 2
+		if !isOneOnOne {
 			continue
 		}
 		for _, m := range chat.Members {
 			mri := strings.ToLower(m.Mri)
-			if strings.Contains(mri, email) {
-				return chat.Id, nil
+			// Match by MRI (primary) or by email in MRI (fallback for older formats)
+			if mri == targetMri || strings.Contains(mri, email) {
+				// Prefer non-meeting chats
+				if !strings.Contains(chat.Id, "meeting_") {
+					return chat.Id, nil
+				}
+				// Keep meeting chat as fallback
+				if fallbackChatID == "" {
+					fallbackChatID = chat.Id
+				}
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no existing 1:1 chat found with %s", email)
+	if fallbackChatID != "" {
+		return fallbackChatID, nil
+	}
+
+	// No existing chat found — create a new 1:1 chat
+	if user.Mri == "" {
+		return "", fmt.Errorf("user %s has no MRI — cannot create chat", email)
+	}
+	return c.CreateOneOnOneChat(user.Mri)
+}
+
+// CreateOneOnOneChat creates a new 1:1 chat thread with the given user MRI
+func (c *Client) CreateOneOnOneChat(targetMri string) (string, error) {
+	// Get our own MRI
+	me, err := c.GetMe()
+	if err != nil {
+		return "", fmt.Errorf("cannot get current user: %w", err)
+	}
+	if me.Mri == "" {
+		return "", fmt.Errorf("current user has no MRI — cannot create chat")
+	}
+
+	body := map[string]interface{}{
+		"members": []map[string]interface{}{
+			{"id": me.Mri, "role": "Admin"},
+			{"id": targetMri, "role": "Admin"},
+		},
+		"properties": map[string]interface{}{
+			"threadType":       "chat",
+			"chatFilesEnabled": "true",
+			"fixedRoster":      "true",
+		},
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("cannot marshal create chat request: %w", err)
+	}
+
+	endpoint := MessagesBase + "threads"
+
+	resp, err := c.doRequest("POST", endpoint, bytes.NewReader(jsonBody), auth.TokenSkype)
+	if err != nil {
+		return "", fmt.Errorf("failed to create chat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// The response Location header or body contains the new thread ID
+	loc := resp.Header.Get("Location")
+	if loc != "" {
+		// Location is typically the full URL; extract the thread ID
+		parts := strings.Split(loc, "/")
+		if len(parts) > 0 {
+			threadID := parts[len(parts)-1]
+			if threadID != "" {
+				return threadID, nil
+			}
+		}
+	}
+
+	// Try parsing response body
+	var createResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err == nil {
+		if id, ok := createResp["id"].(string); ok && id != "" {
+			return id, nil
+		}
+	}
+
+	return "", fmt.Errorf("chat created but could not determine chat ID")
 }
 
 // SearchMessages searches messages across conversations
