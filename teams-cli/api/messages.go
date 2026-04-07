@@ -93,8 +93,8 @@ type SendMessageRequest struct {
 }
 
 type SendMessageResponse struct {
-	Id              string `json:"id"`
-	OriginalArrivalTime string `json:"OriginalArrivalTime"`
+	Id                  string      `json:"id"`
+	OriginalArrivalTime interface{} `json:"OriginalArrivalTime"`
 }
 
 type SendResult struct {
@@ -144,7 +144,7 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 		Status:    "sent",
 		MessageID: resp.Id,
 		ChatID:    chatID,
-		Time:      resp.OriginalArrivalTime,
+		Time:      fmt.Sprintf("%v", resp.OriginalArrivalTime),
 	}, nil
 }
 
