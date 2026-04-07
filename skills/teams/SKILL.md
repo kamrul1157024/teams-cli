@@ -13,175 +13,82 @@ All outgoing messages MUST be shown to the user for confirmation before sending.
 
 ---
 
-## teams-cli Command Reference
+## Step 0: Preflight Checks (ALWAYS DO FIRST)
 
-### Authentication
+Before ANY Teams operation, run these checks in order. Do not skip.
+
+### 0a. Verify Authentication
 
 ```bash
-# Authenticate (launches webview OAuth flow, saves tokens to ~/.config/teams-cli/)
-teams-cli auth
-
-# Check token health
 teams-cli status --format json
-
-# Show current user
-teams-cli me --format json
 ```
 
-### Chats
+Check that ALL three tokens (teams, skype, chatsvcagg) show `"valid": true`.
+If ANY token is invalid or missing, tell the user:
+
+> "Your Teams tokens are expired. Please run `! teams-cli auth` to re-authenticate."
+
+**Do NOT proceed until all tokens are valid.** The chats API uses chatsvcagg, the messages
+API uses skype — if only one is valid, some commands will fail with 401.
+
+**Token expiry awareness:** Tokens last ~1 hour. If you're doing a long task (like profile
+setup), re-check `teams-cli status --format json` every 15-20 minutes. The messages API
+may fail with 401 even when the chats API still works because they use different tokens.
+
+### 0b. Check Profile Exists
 
 ```bash
-# List all chats
-teams-cli chats list --format json
-
-# List unread chats only
-teams-cli chats list --unread --format json
-
-# List 1:1 chats only
-teams-cli chats list --type "1:1" --format json
-
-# List group chats only
-teams-cli chats list --type group --format json
-
-# Limit results
-teams-cli chats list --limit 10 --format json
+ls ~/.teams-agent/persona.md 2>/dev/null
 ```
 
-### Messages
+If `~/.teams-agent/persona.md` does NOT exist, **start profile setup immediately** before
+doing anything else. Do not ask — just begin the setup process described in "Building Your
+Profile" below. The profile is required for persona-aware replies.
 
-```bash
-# Read messages from a chat (default 50)
-teams-cli messages list <chat-id> --format json
-
-# Read last N messages
-teams-cli messages list <chat-id> -n 20 --format json
-
-# Filter by sender
-teams-cli messages list <chat-id> --from "alice" --format json
-
-# Send a message by chat ID
-teams-cli messages send <chat-id> "message text"
-
-# Send a message by email (resolves to 1:1 chat)
-teams-cli messages send --to user@company.com "message text"
-
-# Search messages across chats
-teams-cli messages search "search query" --format json
-
-# Search within a specific chat
-teams-cli messages search "query" --chat <chat-id> --format json
-
-# Search with limit
-teams-cli messages search "query" --limit 10 --format json
-```
-
-### Teams & Channels
-
-```bash
-# List joined teams
-teams-cli teams list --format json
-
-# List channels in a team
-teams-cli channels list <team-id> --format json
-```
-
-### Users
-
-```bash
-# Look up a user by email
-teams-cli users search user@company.com --format json
-```
-
-### Output Formats
-
-All commands support `--format` with values: `json` (default), `table`, `text`.
-Use `--pretty` for pretty-printed JSON.
+If the profile exists, proceed to what the user asked for.
 
 ---
 
-## How to Use This Skill
+## Building Your Profile (First-Time Setup)
 
-When the user invokes `/teams`, start by asking what they want to do. Common tasks:
+This runs automatically when `/teams` is invoked and no profile exists. The profile
+enables persona-aware messaging — without it, replies will be generic.
 
-### Check Unread Messages
-
-1. Run `teams-cli chats list --unread --format json`
-2. For each unread chat, run `teams-cli messages list <chat-id> -n 10 --format json`
-3. Summarize all unread messages grouped by chat/person
-4. Highlight anything that looks urgent or needs a response
-5. Offer to draft replies
-
-### Read a Specific Chat
-
-1. If user gives a chat ID, run `teams-cli messages list <chat-id> -n 30 --format json`
-2. If user gives a name/email, first find the chat:
-   - Run `teams-cli chats list --format json`
-   - Match by title or member name
-3. Present messages conversationally, not as raw JSON
-
-### Send a Message
-
-1. If user provides the message, show it back for confirmation
-2. If user describes what to say, draft the message
-3. ALWAYS show: `To: [recipient] | Message: "[exact text]"` and ask for confirmation
-4. Only after user says yes/send/confirm, run the send command
-5. Never send without explicit approval
-
-### Search Messages
-
-1. Run `teams-cli messages search "query" --format json`
-2. Summarize results grouped by chat
-3. Offer to read full context of any match
-
-### Draft a Reply
-
-1. Read recent messages for context: `teams-cli messages list <chat-id> -n 20 --format json`
-2. If persona/contact context exists at `~/.teams-agent/`, load it (see Context System below)
-3. Draft reply matching the user's style and relationship with the recipient
-4. Show draft and wait for confirmation
-
----
-
-## Context System
-
-The agent context lives at `~/.teams-agent/`. This directory stores the user's communication
-persona, contact relationships, group dynamics, and response patterns. The skill should read
-these files when drafting replies and help the user build them up over time.
-
-### Directory Structure
-
-```
-~/.teams-agent/
-├── config.yaml              # Settings
-├── persona.md               # User's communication style
-├── safety-rules.md          # Hard safety constraints
-├── contacts/                # Per-person relationship profiles
-│   └── <name>.md
-├── groups/                  # Group chat dynamics
-│   └── <group-name>.md
-└── patterns/                # Response templates by topic
-    └── <topic>.md
-```
-
-### Setting Up Context (First Time)
-
-If `~/.teams-agent/` does not exist, offer to set it up. Walk the user through each step:
-
-#### Step 1: Create Directory Structure
+### Step 1: Create Directory Structure & Get Identity
 
 ```bash
 mkdir -p ~/.teams-agent/{contacts,groups,patterns}
+teams-cli me --format json
 ```
 
-#### Step 2: Build Persona
+Save the user's display name — this is used to identify which messages in chat history
+are FROM the user.
 
-Analyze the user's own messages to extract their communication style:
+### Step 2: Build Persona
 
-1. Get the user's chats: `teams-cli chats list --format json`
-2. Pick 5-10 active chats and fetch messages: `teams-cli messages list <id> -n 50 --format json`
-3. Get user's identity: `teams-cli me --format json`
-4. From the fetched messages, identify which messages are FROM the user (match by display name from `me`)
-5. Analyze the user's messages for:
+Analyze the user's own messages to extract their communication style.
+
+1. Get active chats (keep output small):
+```bash
+teams-cli chats list --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+# Pick chats with recent messages, prefer 1:1 for cleaner signal
+for c in data[:15]:
+    print(json.dumps({'id':c['id'],'title':c.get('title',''),'type':c['type']}))" 
+```
+
+2. Fetch messages from 5-10 active chats. Run these in **parallel** to save time:
+```bash
+teams-cli messages list "<chat-id>" -n 50 --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for m in data:
+    print(json.dumps({'from':m['from'],'content':m['content'][:200],'time':m['time']}))"
+```
+
+3. From the fetched messages, filter to messages FROM the user (match display name from Step 1)
+4. Analyze the user's messages for:
    - Tone (casual, formal, mixed)
    - Common phrases they actually use (extract exact quotes)
    - Response length patterns (short/detailed)
@@ -189,7 +96,7 @@ Analyze the user's own messages to extract their communication style:
    - Sign-off style (if any)
    - Emoji usage (none, minimal, frequent)
    - Things they seem to avoid
-6. Write the profile to `~/.teams-agent/persona.md`
+5. Write to `~/.teams-agent/persona.md`
 
 **persona.md format:**
 
@@ -217,27 +124,34 @@ Analyze the user's own messages to extract their communication style:
 - Timezone: [if determinable]
 ```
 
-#### Step 3: Build Contact Profiles
+### Step 3: Build Contact Profiles
 
-For each frequent contact found in chats:
+For each frequent contact found in chat history:
 
-1. Fetch conversation history: `teams-cli messages list <chat-id> -n 50 --format json`
-2. Look up contact info: `teams-cli users search <email> --format json`
+1. Fetch conversation history (already done in Step 2, reuse that data)
+2. Look up contact info if email is available: `teams-cli users search <email> --format json`
 3. Analyze the conversation for:
    - Relationship type (teammate, manager, report, external)
    - Closeness level (close, friendly, professional, formal, new)
    - Common topics discussed
-   - Tone of exchanges (how formal/casual the conversation is)
+   - Tone of exchanges
    - Who initiates more often
    - Sample exchanges that capture the dynamic
 4. Write to `~/.teams-agent/contacts/<firstname-lastname>.md`
+
+**Name disambiguation:** Multiple people can have similar names (e.g., "Kamrul Hassan" vs
+"Kamrul Hasan"). Always cross-reference with email or MRI to avoid merging different people
+into one profile. When in doubt, ask the user.
 
 **Contact profile format:**
 
 ```markdown
 # [Contact Name]
 email: [email]
-chat_id: [1:1 chat ID]
+
+## Chat IDs
+- [1:1 chat ID, if exists]
+- [group chat IDs where this contact appears]
 
 ## Relationship
 - Type: [teammate | manager | report | cross-team | external]
@@ -270,19 +184,23 @@ Me: "[example reply]"
 - Auto-reply: no
 ```
 
-#### Step 4: Build Group Profiles
+### Step 4: Build Group Profiles
 
-For each group chat:
+For each group chat with recent activity:
 
-1. Fetch messages: `teams-cli messages list <chat-id> -n 50 --format json`
+1. Fetch messages (reuse from Step 2 where possible)
 2. Identify all members and cross-reference with contact profiles
-3. Analyze group dynamics:
+3. **Resolve MRI-only titles:** Some group chats have no human title and show raw MRI
+   strings (e.g., "8:orgid:xxx, 8:orgid:yyy +1 more"). Resolve member names from
+   message `from` fields or `teams-cli users search` and create a meaningful title
+   like "Alice, Bob, Carol" for the group profile.
+4. Analyze group dynamics:
    - Who talks most
    - What topics come up
    - Overall formality level
    - Who sets the tone
-4. Build a relationship diagram showing how members relate
-5. Write to `~/.teams-agent/groups/<group-name>.md`
+5. Build a relationship diagram showing how members relate
+6. Write to `~/.teams-agent/groups/<group-name>.md`
 
 **Group profile format:**
 
@@ -290,6 +208,7 @@ For each group chat:
 # [Group Name]
 chat_id: [chat ID]
 type: [team-channel | group-chat]
+human_title: [resolved readable title if original was MRI strings]
 
 ## Members & Relationships
 - [Name] — [relationship to user], [tone] (email: [email])
@@ -313,7 +232,7 @@ type: [team-channel | group-chat]
 - [What to avoid in this group]
 ```
 
-#### Step 5: Build Response Patterns
+### Step 5: Build Response Patterns
 
 Look across all conversations for recurring topics and how the user responds:
 
@@ -339,7 +258,7 @@ Look across all conversations for recurring topics and how the user responds:
 - New contact: "[neutral response]"
 ```
 
-#### Step 6: Write Safety Rules
+### Step 6: Write Safety Rules
 
 Write the hardcoded safety rules to `~/.teams-agent/safety-rules.md`:
 
@@ -370,7 +289,7 @@ Write the hardcoded safety rules to `~/.teams-agent/safety-rules.md`:
 - In mixed groups, use the most neutral/formal tone appropriate
 ```
 
-#### Step 7: Write Default Config
+### Step 7: Write Default Config
 
 ```yaml
 # ~/.teams-agent/config.yaml
@@ -383,6 +302,171 @@ puns_allowed: false
 humor_default: "none"
 cultural_default: "neutral"
 ```
+
+---
+
+## teams-cli Command Reference
+
+### Authentication
+
+```bash
+teams-cli auth                    # Launch OAuth login
+teams-cli auth --force            # Force re-auth even if tokens valid
+teams-cli status --format json    # Check token health
+teams-cli me --format json        # Current user profile
+```
+
+### Chats
+
+```bash
+teams-cli chats list --format json                    # All chats
+teams-cli chats list --unread --format json            # Unread only
+teams-cli chats list --type "1:1" --format json        # 1:1 chats only
+teams-cli chats list --type group --format json        # Group chats only
+teams-cli chats list --limit 10 --format json          # Limit results
+```
+
+### Messages
+
+```bash
+teams-cli messages list <chat-id> --format json        # Read messages (default 50)
+teams-cli messages list <chat-id> -n 20 --format json  # Last N messages
+teams-cli messages send <chat-id> "message text"       # Send by chat ID
+teams-cli messages send --to user@company.com "text"   # Send by email
+teams-cli messages search "query" --format json        # Search messages
+teams-cli messages search "query" --chat <id> --format json  # Search in specific chat
+```
+
+**Known issue: `--from` filter.** The `--from` flag may return empty results for group
+chats due to display name mismatches. Instead, fetch all messages and filter in
+post-processing:
+
+```bash
+teams-cli messages list <chat-id> -n 50 --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for m in data:
+    if 'alice' in m['from'].lower():
+        print(json.dumps(m))"
+```
+
+### Teams & Channels
+
+```bash
+teams-cli teams list --format json                     # List joined teams
+teams-cli channels list <team-id> --format json        # List channels in a team
+```
+
+### Users
+
+```bash
+teams-cli users search user@company.com --format json  # Look up a user
+```
+
+### Output Formats
+
+All commands support `--format` with values: `json` (default), `table`, `text`.
+Use `--pretty` for pretty-printed JSON.
+
+---
+
+## Handling Large JSON Output
+
+The chat list can return 100KB+ of JSON that floods the context window. **ALWAYS** pipe
+through python3 or jq to extract only the fields you need:
+
+```bash
+# Bad — dumps everything into context
+teams-cli chats list --format json
+
+# Good — extract only what you need
+teams-cli chats list --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for c in data[:20]:
+    print(json.dumps({
+        'id': c['id'],
+        'title': c.get('title',''),
+        'type': c['type'],
+        'is_read': c['is_read'],
+        'last_msg': c.get('last_message',{}).get('content','')[:80] if c.get('last_message') else ''
+    }))"
+```
+
+```bash
+# Bad — raw message dump
+teams-cli messages list <id> -n 50 --format json
+
+# Good — compact summary
+teams-cli messages list <id> -n 50 --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for m in data:
+    print(json.dumps({'from':m['from'],'content':m['content'][:200],'time':m['time']}))"
+```
+
+When fetching from multiple chats, always use the compact form. The raw JSON from even
+a single chat can be several KB.
+
+---
+
+## How to Use This Skill
+
+When the user invokes `/teams`:
+
+1. Run **Step 0: Preflight Checks** (auth + profile existence)
+2. If no profile exists, run **Building Your Profile** automatically
+3. Then ask what they want to do
+
+### Check Unread Messages
+
+1. Fetch unread chats (compact output):
+```bash
+teams-cli chats list --unread --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for c in data:
+    print(json.dumps({'id':c['id'],'title':c.get('title',''),'type':c['type']}))"
+```
+2. For each unread chat, fetch messages (compact):
+```bash
+teams-cli messages list <chat-id> -n 10 --format json 2>&1 | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for m in data:
+    print(json.dumps({'from':m['from'],'content':m['content'][:200],'time':m['time']}))"
+```
+3. Summarize all unread messages grouped by chat/person
+4. Highlight anything that looks urgent or needs a response
+5. Offer to draft replies
+
+### Read a Specific Chat
+
+1. If user gives a chat ID, fetch messages directly (compact form)
+2. If user gives a name/email, first find the chat:
+   - Fetch chat list (compact) and match by title or member name
+3. Present messages conversationally, not as raw JSON
+
+### Send a Message
+
+1. If user provides the message, show it back for confirmation
+2. If user describes what to say, draft the message
+3. ALWAYS show: `To: [recipient] | Message: "[exact text]"` and ask for confirmation
+4. Only after user says yes/send/confirm, run the send command
+5. Never send without explicit approval
+
+### Search Messages
+
+1. Run `teams-cli messages search "query" --format json`
+2. Summarize results grouped by chat
+3. Offer to read full context of any match
+
+### Draft a Reply
+
+1. Read recent messages for context (compact form)
+2. Load persona + contact profile + safety rules from `~/.teams-agent/`
+3. Draft reply matching the user's style and relationship with the recipient
+4. Show draft and wait for confirmation
 
 ---
 
@@ -420,6 +504,16 @@ After helping with messages, offer to update context if new patterns emerged:
 - "This is a new contact (Dave). Want me to create a profile for them?"
 - "The group dynamics seem to have shifted — Carol is more active now. Update the group profile?"
 
+### Incremental Updates
+
+When updating profiles, don't re-fetch everything from scratch:
+
+1. Check when the profile was last updated (look at file modification time)
+2. Only fetch messages newer than the last update
+3. MERGE new information — don't replace the existing profile
+4. Add new phrases, update patterns, note tone shifts
+5. Always show the user what changed before writing
+
 ### Manually Update
 
 The user can ask to:
@@ -429,11 +523,6 @@ The user can ask to:
 - "Add a response pattern for deployment questions"
 - "Show me my persona" — read and display persona.md
 - "Show me Alice's profile" — read and display the contact file
-
-### Learning from New Conversations
-
-When updating profiles, MERGE new information — don't replace. Add new phrases, update
-patterns, note tone shifts. Always show the user what changed before writing.
 
 ---
 
@@ -489,7 +578,11 @@ If a message touches on politics, religion, or controversial topics:
 
 ## Error Handling
 
-- If any `teams-cli` command fails with "authentication failed": tell the user to run `teams-cli auth`
-- If a chat ID is not found: list chats and help the user find the right one
-- If `~/.teams-agent/` doesn't exist: offer to set it up (see Context System above)
-- If a contact profile is missing: proceed with professional-neutral tone, offer to create one after
+- **"authentication failed" / HTTP 401:** Tell the user to run `! teams-cli auth`. Note that
+  the chats API (chatsvcagg token) and messages API (skype token) use different tokens — one
+  can expire while the other is still valid.
+- **Chat ID not found:** List chats and help the user find the right one.
+- **`~/.teams-agent/` doesn't exist:** Start profile setup automatically.
+- **Contact profile missing:** Proceed with professional-neutral tone, offer to create one after.
+- **Large JSON response:** Always pipe through python3 to extract needed fields (see "Handling Large JSON Output").
+- **`--from` filter returns empty:** Use python3 post-processing filter instead (see "Known issue" in Messages section).
