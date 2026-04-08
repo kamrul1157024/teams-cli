@@ -33,6 +33,7 @@ var (
 	listTo         string
 	exportFile     string
 	deleteConfirm  bool
+	sendQuote      string
 	notifLimit     int
 	notifType      string
 	notifSince     string
@@ -243,6 +244,15 @@ Examples:
 				}
 				message = strings.ReplaceAll(message, "@"+parts[0], mentionHTML)
 			}
+		}
+
+		// Prepend quoted message if --quote is set
+		if sendQuote != "" {
+			quoteHTML, err := client.BuildQuoteHTML(chatID, sendQuote)
+			if err != nil {
+				return fmt.Errorf("failed to build quote: %w", err)
+			}
+			message = quoteHTML + "\n" + message
 		}
 
 		// Reply to specific message
@@ -530,11 +540,22 @@ var messagesEditCmd = &cobra.Command{
 	Long: `Edit a previously sent message.
 
 Examples:
-  teams-cli messages edit 19:abc@thread.v2 1234567890 "updated text"`,
+  teams-cli messages edit 19:abc@thread.v2 1234567890 "updated text"
+  teams-cli messages edit 19:abc@thread.v2 1234567890 "see this" --quote 9876543210`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := newClient()
-		err := client.EditMessage(args[0], args[1], args[2])
+
+		message := args[2]
+		if sendQuote != "" {
+			quoteHTML, err := client.BuildQuoteHTML(args[0], sendQuote)
+			if err != nil {
+				return fmt.Errorf("failed to build quote: %w", err)
+			}
+			message = quoteHTML + "\n" + message
+		}
+
+		err := client.EditMessage(args[0], args[1], message)
 		if err != nil {
 			return fmt.Errorf("failed to edit message: %w", err)
 		}
@@ -593,9 +614,12 @@ var messagesReplyCmd = &cobra.Command{
 	Short: "Reply to a specific message (threaded)",
 	Long: `Reply to a specific message to create or continue a thread.
 
+Use --quote <msg-id> to embed/quote another message in your reply.
+
 Examples:
   teams-cli messages reply 19:abc@thread.v2 1234567890 "I agree"
-  teams-cli messages reply 19:abc@thread.v2 1234567890 "**bold reply**" --format markdown`,
+  teams-cli messages reply 19:abc@thread.v2 1234567890 "**bold reply**" --msg-format markdown
+  teams-cli messages reply 19:abc@thread.v2 1234567890 "see above" --quote 1234567889`,
 	Args: cobra.MinimumNArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := newClient()
@@ -603,6 +627,15 @@ Examples:
 
 		if sendFormat == "markdown" {
 			message = api.ConvertMarkdownToHTML(message)
+		}
+
+		// Prepend quoted message if --quote is set
+		if sendQuote != "" {
+			quoteHTML, err := client.BuildQuoteHTML(args[0], sendQuote)
+			if err != nil {
+				return fmt.Errorf("failed to build quote: %w", err)
+			}
+			message = quoteHTML + "\n" + message
 		}
 
 		result, err := client.ReplyToMessage(args[0], args[1], message)
@@ -705,6 +738,7 @@ func init() {
 	messagesSendCmd.Flags().StringVar(&sendFormat, "msg-format", "", "Message format: markdown (converts to Teams HTML)")
 	messagesSendCmd.Flags().StringArrayVar(&sendMention, "mention", nil, "Mention user: name=email (e.g., alice=alice@co.com)")
 	messagesSendCmd.Flags().StringVar(&sendReplyTo, "reply-to", "", "Reply to a specific message ID (threaded reply)")
+	messagesSendCmd.Flags().StringVar(&sendQuote, "quote", "", "Embed/quote a message by ID")
 
 	messagesSearchCmd.Flags().StringVar(&searchChat, "chat", "", "Search within specific chat ID")
 	messagesSearchCmd.Flags().IntVar(&searchLimit, "limit", 20, "Max results")
@@ -716,9 +750,12 @@ func init() {
 
 	messagesStatsCmd.Flags().IntVarP(&msgLimit, "limit", "n", 100, "Number of messages to analyze")
 
+	messagesEditCmd.Flags().StringVar(&sendQuote, "quote", "", "Embed/quote a message by ID")
+
 	messagesDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Confirm deletion (required)")
 
 	messagesReplyCmd.Flags().StringVar(&sendFormat, "msg-format", "", "Message format: markdown")
+	messagesReplyCmd.Flags().StringVar(&sendQuote, "quote", "", "Embed/quote a message by ID")
 
 	messagesCmd.AddCommand(messagesListCmd)
 	messagesCmd.AddCommand(messagesSendCmd)

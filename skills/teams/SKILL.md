@@ -428,7 +428,10 @@ teams-cli messages send <chat-id> "**bold** text" --msg-format markdown  # Markd
 teams-cli messages send <chat-id> "Hey @alice" --mention alice=alice@co.com  # @mention
 teams-cli messages send <chat-id> "text" --reply-to <msg-id>  # Reply to specific message
 teams-cli messages reply <chat-id> <msg-id> "reply text"       # Threaded reply
+teams-cli messages reply <chat-id> <msg-id> "text" --quote <quote-msg-id>  # Reply quoting another message
+teams-cli messages send <chat-id> "text" --quote <msg-id>      # Send with embedded quote
 teams-cli messages edit <chat-id> <msg-id> "updated text"      # Edit sent message
+teams-cli messages edit <chat-id> <msg-id> "text" --quote <quote-msg-id>  # Edit with embedded quote
 teams-cli messages delete <chat-id> <msg-id> --confirm         # Delete sent message
 teams-cli messages search "query" --format json                # Search messages
 teams-cli messages search "query" --chat <id> --format json    # Search in specific chat
@@ -448,6 +451,14 @@ Multiple mentions: `--mention alice=alice@co.com --mention bob=bob@co.com`
 
 **Emoji reactions:** Valid reactions are: `like` (👍), `heart` (❤️), `laugh` (😂),
 `surprised` (😮), `sad` (😢), `angry` (😡). You can also use the emoji characters directly.
+
+**Quoting messages (`--quote <msg-id>`):** Embeds another user's message as a blockquote
+in your reply/send/edit. The quoted message appears as a visual quote block in Teams with
+the original sender's name and a preview of their message. Use this when responding to a
+specific message in a thread — it makes clear which message you're addressing.
+
+When the skill targets a specific message (e.g., replying to what someone said in a thread),
+always use `--quote` to embed the referenced message for context.
 
 ### Teams & Channels
 
@@ -705,6 +716,7 @@ If a message touches on politics, religion, or controversial topics:
 | Send markdown | `teams-cli messages send <chat-id> "**bold**" --msg-format markdown` |
 | @mention | `teams-cli messages send <chat-id> "Hey @alice" --mention alice=email` |
 | Reply thread | `teams-cli messages reply <chat-id> <msg-id> "text"` |
+| Reply + quote | `teams-cli messages reply <chat-id> <msg-id> "text" --quote <quote-id>` |
 | Edit message | `teams-cli messages edit <chat-id> <msg-id> "new text"` |
 | Delete message | `teams-cli messages delete <chat-id> <msg-id> --confirm` |
 | Search | `teams-cli messages search "query" --format json` |

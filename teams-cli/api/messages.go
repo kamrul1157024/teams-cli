@@ -509,6 +509,75 @@ func (c *Client) BuildMentionHTML(email string) (string, error) {
 	return fmt.Sprintf(`<at id="%s">%s</at>`, user.Mri, name), nil
 }
 
+// BuildQuoteHTML fetches a message and returns a Teams-formatted blockquote embedding it.
+// The chatID can be a channel or chat ID; messageID is the message to quote.
+func (c *Client) BuildQuoteHTML(chatID, messageID string) (string, error) {
+	// Fetch recent messages and find the target
+	messages, err := c.GetMessagesRaw(chatID, 50)
+	if err != nil {
+		return "", fmt.Errorf("cannot fetch messages: %w", err)
+	}
+
+	var found *ChatMessage
+	for i := range messages {
+		if messages[i].Id == messageID {
+			found = &messages[i]
+			break
+		}
+	}
+	if found == nil {
+		return "", fmt.Errorf("message %s not found in conversation", messageID)
+	}
+
+	// Extract sender MRI from the "from" URL (last path segment)
+	senderMRI := found.From
+	if parts := strings.Split(found.From, "/"); len(parts) > 0 {
+		senderMRI = parts[len(parts)-1]
+	}
+
+	senderName := found.ImDisplayName
+	if senderName == "" {
+		senderName = senderMRI
+	}
+
+	preview := stripHTML(found.Content)
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+
+	quote := fmt.Sprintf(
+		`<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="%s">`+
+			`<strong itemprop="mri" itemid="%s">%s</strong>`+
+			`<span itemprop="time" itemid="%s"></span>`+
+			`<p itemprop="preview">%s</p>`+
+			`</blockquote>`,
+		messageID, senderMRI, escapeHTML(senderName), messageID, escapeHTML(preview),
+	)
+	return quote, nil
+}
+
+// GetMessagesRaw returns raw ChatMessage structs (with MRI info) for a conversation
+func (c *Client) GetMessagesRaw(chatID string, limit int) ([]ChatMessage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) + "/messages"
+	u, _ := url.Parse(endpoint)
+	q := u.Query()
+	q.Set("view", "msnp24Equivalent|supportsMessageProperties")
+	q.Set("pageSize", fmt.Sprintf("%d", limit))
+	q.Set("startTime", "1")
+	u.RawQuery = q.Encode()
+
+	var msgResp MessagesResponse
+	if err := c.getJSON(u.String(), auth.TokenSkype, &msgResp); err != nil {
+		return nil, err
+	}
+
+	return msgResp.Messages, nil
+}
+
 // NotificationItem represents a parsed notification
 type NotificationItem struct {
 	ID           string `json:"id"`
