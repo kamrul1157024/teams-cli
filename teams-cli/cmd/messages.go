@@ -15,19 +15,27 @@ import (
 )
 
 var (
-	msgLimit    int
-	msgFrom     string
-	msgSince    string
-	msgMine     bool
-	msgPlain    bool
-	msgBefore   string
-	msgAfter    string
-	sendTo      string
-	sendHTML    bool
-	searchChat  string
-	searchLimit int
-	listTo      string
-	exportFile  string
+	msgLimit       int
+	msgFrom        string
+	msgSince       string
+	msgMine        bool
+	msgPlain       bool
+	msgBefore      string
+	msgAfter       string
+	sendTo         string
+	sendHTML       bool
+	sendFormat     string
+	sendMention    []string
+	sendGroup      string
+	sendReplyTo    string
+	searchChat     string
+	searchLimit    int
+	listTo         string
+	exportFile     string
+	deleteConfirm  bool
+	notifLimit     int
+	notifType      string
+	notifSince     string
 )
 
 var messagesCmd = &cobra.Command{
@@ -155,13 +163,17 @@ Examples:
 var messagesSendCmd = &cobra.Command{
 	Use:   "send [chat-id] [message]",
 	Short: "Send a message to a conversation",
-	Long: `Send a message to a conversation by chat ID or by email (--to).
+	Long: `Send a message to a conversation by chat ID, email (--to), or group name (--group).
 
 Message can be provided as an argument or piped via stdin.
 
 Examples:
   teams-cli messages send 19:abc@thread.v2 "Hello"
   teams-cli messages send --to john@company.com "Hello"
+  teams-cli messages send --group "Monad Standup" "Hello team"
+  teams-cli messages send 19:abc@thread.v2 "**bold** text" --format markdown
+  teams-cli messages send 19:abc@thread.v2 "Hey @alice check this" --mention alice=alice@co.com
+  teams-cli messages send 19:abc@thread.v2 "reply text" --reply-to 1234567890
   echo "Build passed" | teams-cli messages send 19:abc@thread.v2`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := newClient()
@@ -169,7 +181,6 @@ Examples:
 		var chatID, message string
 
 		if sendTo != "" {
-			// Resolve email to chat ID
 			id, err := client.FindChatByEmail(sendTo)
 			if err != nil {
 				return fmt.Errorf("failed to find chat: %w", err)
@@ -178,9 +189,18 @@ Examples:
 			if len(args) > 0 {
 				message = strings.Join(args, " ")
 			}
+		} else if sendGroup != "" {
+			id, err := client.FindChatByName(sendGroup)
+			if err != nil {
+				return fmt.Errorf("failed to find group: %w", err)
+			}
+			chatID = id
+			if len(args) > 0 {
+				message = strings.Join(args, " ")
+			}
 		} else {
 			if len(args) < 1 {
-				return fmt.Errorf("chat-id is required (or use --to <email>)")
+				return fmt.Errorf("chat-id is required (or use --to <email> / --group <name>)")
 			}
 			chatID = args[0]
 			if len(args) > 1 {
@@ -205,12 +225,47 @@ Examples:
 			return fmt.Errorf("no message provided")
 		}
 
+		// Convert markdown to HTML if requested
+		if sendFormat == "markdown" {
+			message = api.ConvertMarkdownToHTML(message)
+		}
+
+		// Process @mentions
+		if len(sendMention) > 0 {
+			for _, m := range sendMention {
+				parts := strings.SplitN(m, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid mention format %q — use name=email", m)
+				}
+				mentionHTML, err := client.BuildMentionHTML(parts[1])
+				if err != nil {
+					return fmt.Errorf("failed to resolve mention %s: %w", parts[1], err)
+				}
+				message = strings.ReplaceAll(message, "@"+parts[0], mentionHTML)
+			}
+		}
+
+		// Reply to specific message
+		if sendReplyTo != "" {
+			result, err := client.ReplyToMessage(chatID, sendReplyTo, message)
+			if err != nil {
+				return fmt.Errorf("failed to reply: %w", err)
+			}
+			result.Content = message
+			switch outputFormat {
+			case "text":
+				fmt.Printf("Replied to %s in %s\n", sendReplyTo, chatID)
+			default:
+				output.JSON(result, prettyPrint)
+			}
+			return nil
+		}
+
 		result, err := client.SendMessage(chatID, message)
 		if err != nil {
 			return fmt.Errorf("failed to send message: %w", err)
 		}
 
-		// Echo sent message content
 		result.Content = message
 
 		switch outputFormat {
@@ -469,6 +524,155 @@ Examples:
 	},
 }
 
+var messagesEditCmd = &cobra.Command{
+	Use:   "edit <chat-id> <message-id> <new-text>",
+	Short: "Edit a sent message",
+	Long: `Edit a previously sent message.
+
+Examples:
+  teams-cli messages edit 19:abc@thread.v2 1234567890 "updated text"`,
+	Args: cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := newClient()
+		err := client.EditMessage(args[0], args[1], args[2])
+		if err != nil {
+			return fmt.Errorf("failed to edit message: %w", err)
+		}
+
+		switch outputFormat {
+		case "text":
+			fmt.Printf("Message %s edited\n", args[1])
+		default:
+			output.JSON(map[string]string{
+				"status":     "edited",
+				"chat_id":    args[0],
+				"message_id": args[1],
+			}, prettyPrint)
+		}
+		return nil
+	},
+}
+
+var messagesDeleteCmd = &cobra.Command{
+	Use:   "delete <chat-id> <message-id>",
+	Short: "Delete a sent message",
+	Long: `Delete a previously sent message.
+
+Examples:
+  teams-cli messages delete 19:abc@thread.v2 1234567890
+  teams-cli messages delete 19:abc@thread.v2 1234567890 --confirm`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !deleteConfirm {
+			fmt.Printf("Delete message %s from %s? Use --confirm to proceed.\n", args[1], args[0])
+			return nil
+		}
+
+		client := newClient()
+		err := client.DeleteMessage(args[0], args[1])
+		if err != nil {
+			return fmt.Errorf("failed to delete message: %w", err)
+		}
+
+		switch outputFormat {
+		case "text":
+			fmt.Printf("Message %s deleted\n", args[1])
+		default:
+			output.JSON(map[string]string{
+				"status":     "deleted",
+				"chat_id":    args[0],
+				"message_id": args[1],
+			}, prettyPrint)
+		}
+		return nil
+	},
+}
+
+var messagesReplyCmd = &cobra.Command{
+	Use:   "reply <chat-id> <message-id> <text>",
+	Short: "Reply to a specific message (threaded)",
+	Long: `Reply to a specific message to create or continue a thread.
+
+Examples:
+  teams-cli messages reply 19:abc@thread.v2 1234567890 "I agree"
+  teams-cli messages reply 19:abc@thread.v2 1234567890 "**bold reply**" --format markdown`,
+	Args: cobra.MinimumNArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := newClient()
+		message := strings.Join(args[2:], " ")
+
+		if sendFormat == "markdown" {
+			message = api.ConvertMarkdownToHTML(message)
+		}
+
+		result, err := client.ReplyToMessage(args[0], args[1], message)
+		if err != nil {
+			return fmt.Errorf("failed to reply: %w", err)
+		}
+		result.Content = message
+
+		switch outputFormat {
+		case "text":
+			fmt.Printf("Replied to %s in %s\n", args[1], args[0])
+		default:
+			output.JSON(result, prettyPrint)
+		}
+		return nil
+	},
+}
+
+var notificationsCmd = &cobra.Command{
+	Use:   "notifications",
+	Short: "View activity notifications (mentions, replies, reactions)",
+	Long: `View your Teams activity feed — mentions, replies, reactions, and follows.
+
+Examples:
+  teams-cli notifications --format json              # All notifications
+  teams-cli notifications --type mentions             # Only @mentions
+  teams-cli notifications --type replies              # Only replies to your messages
+  teams-cli notifications --type reactions            # Only emoji reactions
+  teams-cli notifications --since 2024-04-07          # Since a specific date
+  teams-cli notifications -n 10 --format table        # Last 10, table format`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := newClient()
+		items, err := client.GetNotifications(notifLimit, notifType, notifSince)
+		if err != nil {
+			return fmt.Errorf("failed to get notifications: %w", err)
+		}
+
+		switch outputFormat {
+		case "text":
+			for _, n := range items {
+				t := formatMessageTime(n.Time)
+				ctx := ""
+				if n.Context != "" {
+					ctx = " [" + n.Context + "]"
+				}
+				content := n.Content
+				if content == "" {
+					content = "(no content)"
+				}
+				fmt.Printf("[%s] %s%s: %s\n", t, n.Type, ctx, truncate(content, 80))
+			}
+		case "table":
+			headers := []string{"TIME", "TYPE", "CONTEXT", "CONTENT"}
+			var rows [][]string
+			for _, n := range items {
+				rows = append(rows, []string{
+					formatMessageTime(n.Time),
+					n.Type,
+					truncate(n.Context, 25),
+					truncate(n.Content, 50),
+				})
+			}
+			output.Table(headers, rows)
+		default:
+			output.JSON(items, prettyPrint)
+		}
+		return nil
+	},
+}
+
 func formatMessageTime(t string) string {
 	parsed, err := time.Parse(time.RFC3339Nano, t)
 	if err != nil {
@@ -496,7 +700,11 @@ func init() {
 	messagesListCmd.Flags().StringVar(&msgAfter, "after", "", "Cursor: fetch messages after this time (RFC3339)")
 
 	messagesSendCmd.Flags().StringVar(&sendTo, "to", "", "Send to user by email (resolves to chat ID)")
+	messagesSendCmd.Flags().StringVar(&sendGroup, "group", "", "Send to group chat by name")
 	messagesSendCmd.Flags().BoolVar(&sendHTML, "html", false, "Send as raw HTML")
+	messagesSendCmd.Flags().StringVar(&sendFormat, "msg-format", "", "Message format: markdown (converts to Teams HTML)")
+	messagesSendCmd.Flags().StringArrayVar(&sendMention, "mention", nil, "Mention user: name=email (e.g., alice=alice@co.com)")
+	messagesSendCmd.Flags().StringVar(&sendReplyTo, "reply-to", "", "Reply to a specific message ID (threaded reply)")
 
 	messagesSearchCmd.Flags().StringVar(&searchChat, "chat", "", "Search within specific chat ID")
 	messagesSearchCmd.Flags().IntVar(&searchLimit, "limit", 20, "Max results")
@@ -508,6 +716,10 @@ func init() {
 
 	messagesStatsCmd.Flags().IntVarP(&msgLimit, "limit", "n", 100, "Number of messages to analyze")
 
+	messagesDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Confirm deletion (required)")
+
+	messagesReplyCmd.Flags().StringVar(&sendFormat, "msg-format", "", "Message format: markdown")
+
 	messagesCmd.AddCommand(messagesListCmd)
 	messagesCmd.AddCommand(messagesSendCmd)
 	messagesCmd.AddCommand(messagesSearchCmd)
@@ -515,7 +727,15 @@ func init() {
 	messagesCmd.AddCommand(messagesExportCmd)
 	messagesCmd.AddCommand(messagesStatsCmd)
 	messagesCmd.AddCommand(messagesReactCmd)
+	messagesCmd.AddCommand(messagesEditCmd)
+	messagesCmd.AddCommand(messagesDeleteCmd)
+	messagesCmd.AddCommand(messagesReplyCmd)
 	rootCmd.AddCommand(messagesCmd)
+
+	notificationsCmd.Flags().IntVarP(&notifLimit, "limit", "n", 30, "Number of notifications to fetch")
+	notificationsCmd.Flags().StringVar(&notifType, "type", "", "Filter by type: mentions, replies, reactions")
+	notificationsCmd.Flags().StringVar(&notifSince, "since", "", "Only notifications since date (YYYY-MM-DD)")
+	rootCmd.AddCommand(notificationsCmd)
 
 	contactsCmd.AddCommand(contactsListCmd)
 	rootCmd.AddCommand(contactsCmd)

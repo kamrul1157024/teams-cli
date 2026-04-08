@@ -97,20 +97,150 @@ type ConversationResponse struct {
 }
 
 func (c *Client) GetConversations() (*ConversationResponse, error) {
-	key := cacheKey("convs")
-	var cached ConversationResponse
-	if c.cacheGet(key, &cached) {
-		return &cached, nil
-	}
-
 	url := ChatSvcAggBase + "teams/users/me?isPrefetch=false&enableMembershipSummary=true"
 	var result ConversationResponse
 	if err := c.getJSON(url, auth.TokenChatSvcAgg, &result); err != nil {
 		return nil, err
 	}
 
-	c.cacheSet(key, &result, TTLConversations)
+	// Merge DM chats from the Messages/Skype API (CSA endpoint doesn't return true 1:1 DMs)
+	dmChats, dmErr := c.getDMConversations()
+	if dmErr == nil && len(dmChats) > 0 {
+		// Build set of active DM IDs from Skype API
+		activeDMs := make(map[string]bool, len(dmChats))
+		for _, dm := range dmChats {
+			activeDMs[dm.Id] = true
+		}
+
+		// Unhide DMs that exist in the CSA response but are marked hidden
+		for i := range result.Chats {
+			if activeDMs[result.Chats[i].Id] {
+				result.Chats[i].Hidden = false
+				// Ensure they're marked as 1:1
+				result.Chats[i].IsOneOnOne = true
+				result.Chats[i].ChatType = "oneOnOne"
+			}
+		}
+
+		// Add any DMs not already in the CSA response
+		existing := make(map[string]bool, len(result.Chats))
+		for _, ch := range result.Chats {
+			existing[ch.Id] = true
+		}
+		for _, dm := range dmChats {
+			if !existing[dm.Id] {
+				result.Chats = append(result.Chats, dm)
+			}
+		}
+	}
+
 	return &result, nil
+}
+
+// SkypeConversation represents a conversation from the Messages/Skype API
+type SkypeConversation struct {
+	ID               string                 `json:"id"`
+	Type             string                 `json:"type"`
+	Version          int64                  `json:"version"`
+	TargetLink       string                 `json:"targetLink"`
+	ThreadProperties map[string]interface{} `json:"threadProperties"`
+	LastMessage      *SkypeLastMessage      `json:"lastMessage"`
+	Members          string                 `json:"members"`
+}
+
+type SkypeLastMessage struct {
+	ID              string `json:"id"`
+	OriginContextID string `json:"origincontextid"`
+	ComposeTime     string `json:"composetime"`
+	From            string `json:"from"`
+	Content         string `json:"content"`
+	MessageType     string `json:"messagetype"`
+	ContentType     string `json:"contenttype"`
+	ImDisplayName   string `json:"imdisplayname"`
+}
+
+type SkypeConversationsResponse struct {
+	Conversations []SkypeConversation    `json:"conversations"`
+	Metadata      map[string]interface{} `json:"_metadata"`
+}
+
+// getDMConversations fetches 1:1 DM conversations from the Messages/Skype API.
+// The CSA endpoint doesn't return true DMs — only the Skype/Messages API has them.
+func (c *Client) getDMConversations() ([]Chat, error) {
+	endpoint := MessagesBase + "users/ME/conversations?view=msnp24Equivalent&pageSize=200&startTime=0&targetType=Passport|Skype|Lync"
+	var resp SkypeConversationsResponse
+	if err := c.getJSON(endpoint, auth.TokenSkype, &resp); err != nil {
+		return nil, err
+	}
+
+	var chats []Chat
+	for _, conv := range resp.Conversations {
+		// Only include DM threads (format: 19:uuid1_uuid2@unq.gbl.spaces)
+		if !strings.Contains(conv.ID, "@unq.gbl.spaces") {
+			continue
+		}
+
+		chat := Chat{
+			Id:         conv.ID,
+			ChatType:   "oneOnOne",
+			IsOneOnOne: true,
+			IsRead:     true,
+		}
+
+		// Extract thread properties
+		if conv.ThreadProperties != nil {
+			if title, ok := conv.ThreadProperties["topic"].(string); ok {
+				chat.Title = title
+			}
+			// Check consumption horizon for unread status
+			if ch, ok := conv.ThreadProperties["consumptionhorizon"].(string); ok && ch != "" {
+				parts := strings.SplitN(ch, ";", 3)
+				if len(parts) >= 1 && conv.LastMessage != nil && conv.LastMessage.ComposeTime != "" {
+					if msgTime, err := time.Parse(time.RFC3339Nano, conv.LastMessage.ComposeTime); err == nil {
+						var horizonMs int64
+						if _, err := fmt.Sscan(parts[0], &horizonMs); err == nil && horizonMs > 0 {
+							horizonTime := time.UnixMilli(horizonMs)
+							if msgTime.After(horizonTime) {
+								chat.IsRead = false
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Use last message sender name as title for DMs (they have no explicit title)
+		if chat.Title == "" && conv.LastMessage != nil && conv.LastMessage.ImDisplayName != "" {
+			chat.Title = conv.LastMessage.ImDisplayName
+		}
+
+		// Parse last message
+		if conv.LastMessage != nil && conv.LastMessage.Content != "" {
+			chat.LastMessage = LastMessage{
+				MessageType:   conv.LastMessage.MessageType,
+				Content:       conv.LastMessage.Content,
+				ImDisplayName: conv.LastMessage.ImDisplayName,
+				ComposeTime:   conv.LastMessage.ComposeTime,
+				From:          conv.LastMessage.From,
+			}
+		}
+
+		// Extract members from thread ID (format: 19:uuid1_uuid2@unq.gbl.spaces)
+		threadPart := strings.TrimPrefix(conv.ID, "19:")
+		threadPart = strings.Split(threadPart, "@")[0]
+		mris := strings.Split(threadPart, "_")
+		for _, mri := range mris {
+			if mri != "" {
+				chat.Members = append(chat.Members, ChatMember{
+					Mri: "8:orgid:" + mri,
+				})
+			}
+		}
+
+		chats = append(chats, chat)
+	}
+
+	return chats, nil
 }
 
 // ChatListItem is a simplified view of a chat for list output
@@ -138,6 +268,9 @@ type ChatListResponse struct {
 }
 
 func chatType(chat Chat) string {
+	if strings.Contains(chat.Id, "@unq.gbl.spaces") {
+		return "dm"
+	}
 	if chat.IsOneOnOne || chat.ChatType == "oneOnOne" || len(chat.Members) == 2 {
 		return "1:1"
 	}
@@ -153,6 +286,7 @@ type ChatListOptions struct {
 	Compact     bool
 	WithPerson  string
 	ActiveSince string
+	IncludeBots bool
 }
 
 func (c *Client) ListChats(filterType string, unreadOnly bool, limit int) ([]ChatListItem, error) {
@@ -263,22 +397,40 @@ func (c *Client) ListChatsWithOptions(opts ChatListOptions) ([]ChatListItem, err
 			}
 		}
 
+		// Resolve member names, filtering out bots (28:*) for DMs unless --include-bots
+		skipBots := ct == "dm" && !opts.IncludeBots
 		if !opts.Compact {
 			for _, m := range chat.Members {
+				if skipBots && strings.HasPrefix(m.Mri, "28:") {
+					continue
+				}
 				item.Members = append(item.Members, resolveName(m, nameMap))
 			}
 		}
 
+		// Count only human members for DMs (unless --include-bots)
+		if skipBots {
+			humanCount := 0
+			for _, m := range chat.Members {
+				if !strings.HasPrefix(m.Mri, "28:") {
+					humanCount++
+				}
+			}
+			item.MemberCount = humanCount
+		}
+
 		// If no title, build from members
 		if item.Title == "" {
-			if opts.Compact {
-				// Resolve names just for title
-				var names []string
-				for _, m := range chat.Members {
-					names = append(names, resolveName(m, nameMap))
+			var names []string
+			for _, m := range chat.Members {
+				if skipBots && strings.HasPrefix(m.Mri, "28:") {
+					continue
 				}
+				names = append(names, resolveName(m, nameMap))
+			}
+			if opts.Compact || len(item.Members) == 0 {
 				item.Title = joinNames(names, 3)
-			} else if len(item.Members) > 0 {
+			} else {
 				item.Title = joinNames(item.Members, 3)
 			}
 		}
@@ -413,7 +565,16 @@ func stripHTML(s string) string {
 			result = append(result, s[i])
 		}
 	}
-	return string(result)
+	out := string(result)
+	// Decode common HTML entities
+	out = strings.ReplaceAll(out, "&nbsp;", " ")
+	out = strings.ReplaceAll(out, "&amp;", "&")
+	out = strings.ReplaceAll(out, "&lt;", "<")
+	out = strings.ReplaceAll(out, "&gt;", ">")
+	out = strings.ReplaceAll(out, "&quot;", "\"")
+	out = strings.ReplaceAll(out, "&#39;", "'")
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	return strings.TrimSpace(out)
 }
 
 func joinNames(names []string, max int) string {

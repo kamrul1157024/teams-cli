@@ -58,7 +58,7 @@ do NOT need to maintain your own cache in `~/.teams-agent/` — the CLI handles 
 
 | Data | TTL | Notes |
 |------|-----|-------|
-| Conversations (chats list) | 5 min | Auto-invalidated on send/create |
+| Conversations (chats list) | never | Always fetches fresh data |
 | User info (users search) | 1 hour | Name, email, MRI, department |
 | Own profile (me) | 1 hour | Very stable |
 | Chat ID resolution (chats resolve) | 10 min | Email → chat ID mapping |
@@ -67,6 +67,7 @@ do NOT need to maintain your own cache in `~/.teams-agent/` — the CLI handles 
 **What is NEVER cached:**
 
 - `messages list` — always fetches fresh messages
+- DM conversations (Skype API) — always fetches fresh DM list with unread state
 - `chats list --unread` — always bypasses cache for fresh unread state
 - `messages search` — always searches live
 - `messages send` — invalidates conversations cache after sending
@@ -389,8 +390,10 @@ assistance. The user can ask to turn it on/off:
 ```bash
 teams-cli chats list --format json                           # All chats
 teams-cli chats list --unread --format json                   # Unread only
-teams-cli chats list --type "1:1" --format json               # 1:1 chats only
+teams-cli chats list --type dm --format json                  # True DMs only (not meeting chats)
+teams-cli chats list --type "1:1" --format json               # 1:1 chats (meeting-based)
 teams-cli chats list --type group --format json               # Group chats only
+teams-cli chats list --type dm --include-bots --format json   # DMs including bot members
 teams-cli chats list --limit 10 --format json                 # Limit results
 teams-cli chats list --offset 10 --limit 10 --format json     # Pagination
 teams-cli chats list --compact --format json                  # Omit members array
@@ -399,6 +402,13 @@ teams-cli chats list --active-since 2024-01-01 --format json  # Filter by activi
 teams-cli chats resolve user@company.com                      # Get DM chat ID from email
 teams-cli chats create --with user@company.com --format json  # Create new 1:1 chat
 ```
+
+**Chat types:**
+- `dm` — True 1:1 direct messages (personal chats at `@unq.gbl.spaces`)
+- `1:1` — Meeting-based 1:1 chats (scheduled meetings with 2 people)
+- `group` — Group chats and channels
+
+By default, bot members (Jira, Copilot, etc.) are hidden from DM listings. Use `--include-bots` to show them.
 
 ### Messages
 
@@ -413,6 +423,13 @@ teams-cli messages list <chat-id> --plain --format text        # Clean text outp
 teams-cli messages list <chat-id> --before <time> --after <time> # Cursor pagination
 teams-cli messages send <chat-id> "message text"               # Send by chat ID
 teams-cli messages send --to user@company.com "text"           # Send by email (creates 1:1 if needed)
+teams-cli messages send --group "Monad Standup" "Hello team"   # Send to group by name
+teams-cli messages send <chat-id> "**bold** text" --msg-format markdown  # Markdown → HTML
+teams-cli messages send <chat-id> "Hey @alice" --mention alice=alice@co.com  # @mention
+teams-cli messages send <chat-id> "text" --reply-to <msg-id>  # Reply to specific message
+teams-cli messages reply <chat-id> <msg-id> "reply text"       # Threaded reply
+teams-cli messages edit <chat-id> <msg-id> "updated text"      # Edit sent message
+teams-cli messages delete <chat-id> <msg-id> --confirm         # Delete sent message
 teams-cli messages search "query" --format json                # Search messages
 teams-cli messages search "query" --chat <id> --format json    # Search in specific chat
 teams-cli messages mine --format json                          # My messages across chats
@@ -421,6 +438,13 @@ teams-cli messages export <chat-id> -o chat.json               # Export chat his
 teams-cli messages react <chat-id> <message-id> like           # React with emoji
 teams-cli messages react <chat-id> <message-id> heart          # React with heart
 ```
+
+**Markdown support (`--msg-format markdown`):** Converts markdown to Teams HTML:
+- `**bold**` → bold, `*italic*` → italic, `` `code` `` → inline code
+- ` ```code blocks``` `, `~~strikethrough~~`, `# headers`, `- lists`
+
+**@mentions (`--mention`):** Resolves email to Teams MRI and wraps in `<at>` tag.
+Multiple mentions: `--mention alice=alice@co.com --mention bob=bob@co.com`
 
 **Emoji reactions:** Valid reactions are: `like` (👍), `heart` (❤️), `laugh` (😂),
 `surprised` (😮), `sad` (😢), `angry` (😡). You can also use the emoji characters directly.
@@ -431,6 +455,25 @@ teams-cli messages react <chat-id> <message-id> heart          # React with hear
 teams-cli teams list --format json                     # List joined teams
 teams-cli channels list <team-id> --format json        # List channels in a team
 ```
+
+### Notifications
+
+```bash
+teams-cli notifications --format json                    # All notifications
+teams-cli notifications --type mentions --format json    # Only @mentions
+teams-cli notifications --type replies --format json     # Only replies to your messages
+teams-cli notifications --type reactions --format json   # Only emoji reactions
+teams-cli notifications --since 2024-04-07 --format json # Since a specific date
+teams-cli notifications --since 2024-04-07 --type mentions --format json  # Combined filters
+```
+
+**Notification types:** `mention` (channel @mention), `mentionInChat` (DM @mention),
+`replyToReply` (thread reply), `reactionInChat` (emoji reaction), `follow` (channel activity).
+
+**Use cases:**
+- "Catch me up on today" → `notifications --since today's-date --format json`
+- "Who mentioned me?" → `notifications --type mentions --format json`
+- "What needs my attention?" → `notifications --type mentions --since <date> --format json`
 
 ### Users
 
@@ -648,12 +691,22 @@ If a message touches on politics, religion, or controversial topics:
 
 | Task | Command |
 |------|---------|
+| Notifications | `teams-cli notifications --format json` |
+| Mentions | `teams-cli notifications --type mentions --format json` |
+| Catch up | `teams-cli notifications --since YYYY-MM-DD --format json` |
+| List DMs | `teams-cli chats list --type dm --format json` |
 | Check unreads | `teams-cli chats list --unread --format json` |
 | Read messages | `teams-cli messages list <chat-id> -n N --format json` |
 | Read by email | `teams-cli messages list --to email --format json` |
 | My messages | `teams-cli messages list <chat-id> --mine --format json` |
 | Send message | `teams-cli messages send <chat-id> "text"` |
 | Send by email | `teams-cli messages send --to email "text"` |
+| Send to group | `teams-cli messages send --group "name" "text"` |
+| Send markdown | `teams-cli messages send <chat-id> "**bold**" --msg-format markdown` |
+| @mention | `teams-cli messages send <chat-id> "Hey @alice" --mention alice=email` |
+| Reply thread | `teams-cli messages reply <chat-id> <msg-id> "text"` |
+| Edit message | `teams-cli messages edit <chat-id> <msg-id> "new text"` |
+| Delete message | `teams-cli messages delete <chat-id> <msg-id> --confirm` |
 | Search | `teams-cli messages search "query" --format json` |
 | Resolve email | `teams-cli chats resolve email` |
 | Create DM | `teams-cli chats create --with email --format json` |

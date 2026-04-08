@@ -261,6 +261,371 @@ func (c *Client) ReactToMessage(chatID, messageID, emoji string) error {
 	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(emotionsJSON))
 }
 
+// EditMessage edits a previously sent message
+func (c *Client) EditMessage(chatID, messageID, newContent string) error {
+	// Wrap plain text in HTML
+	if !strings.HasPrefix(newContent, "<") {
+		newContent = "<p>" + newContent + "</p>"
+	}
+
+	body := map[string]interface{}{
+		"content":     newContent,
+		"messagetype": "RichText/Html",
+		"contenttype": "text",
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("cannot marshal edit: %w", err)
+	}
+
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
+		"/messages/" + url.PathEscape(messageID)
+
+	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody))
+}
+
+// DeleteMessage soft-deletes a previously sent message
+func (c *Client) DeleteMessage(chatID, messageID string) error {
+	body := map[string]interface{}{
+		"content":       "",
+		"messagetype":   "RichText/Html",
+		"contenttype":   "text",
+		"skypeeditedid": messageID,
+		"properties": map[string]interface{}{
+			"deletetime": fmt.Sprintf("%d", time.Now().UnixMilli()),
+		},
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("cannot marshal delete: %w", err)
+	}
+
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
+		"/messages/" + url.PathEscape(messageID)
+
+	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody))
+}
+
+// ReplyToMessage sends a reply to a specific message (threaded reply)
+func (c *Client) ReplyToMessage(chatID, parentMessageID, content string) (*SendResult, error) {
+	displayName := ""
+	email, err := auth.GetEmail()
+	if err == nil {
+		displayName = email
+	}
+
+	// Wrap plain text in HTML
+	if !strings.HasPrefix(content, "<") {
+		content = "<p>" + content + "</p>"
+	}
+
+	// Append signature if enabled
+	cfg := LoadConfig()
+	if cfg.SignatureEnabled && cfg.Signature != "" {
+		content = content + "<p><em>— " + cfg.Signature + "</em></p>"
+	}
+
+	body := map[string]interface{}{
+		"content":         content,
+		"messagetype":     "RichText/Html",
+		"contenttype":     "text",
+		"clientmessageid": fmt.Sprintf("%d", time.Now().UnixNano()/1e6),
+		"imdisplayname":   displayName,
+		"properties": map[string]interface{}{
+			"importance": "",
+			"subject":    "",
+		},
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("cannot marshal reply: %w", err)
+	}
+
+	// Reply endpoint uses the parent message ID in the URL
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
+		"/messages/" + url.PathEscape(parentMessageID)
+
+	var resp SendMessageResponse
+	if err := c.postJSON(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody), &resp); err != nil {
+		return nil, err
+	}
+
+	return &SendResult{
+		Status:    "replied",
+		MessageID: resp.Id,
+		ChatID:    chatID,
+		Time:      fmt.Sprintf("%v", resp.OriginalArrivalTime),
+	}, nil
+}
+
+// FindChatByName finds a group chat by its title/name
+func (c *Client) FindChatByName(name string) (string, error) {
+	convs, err := c.GetConversations()
+	if err != nil {
+		return "", err
+	}
+
+	name = strings.ToLower(name)
+	var bestMatch string
+	for _, chat := range convs.Chats {
+		if chat.Hidden {
+			continue
+		}
+		title := strings.ToLower(chat.Title)
+		if title == name {
+			return chat.Id, nil // Exact match
+		}
+		if strings.Contains(title, name) && bestMatch == "" {
+			bestMatch = chat.Id
+		}
+	}
+
+	if bestMatch != "" {
+		return bestMatch, nil
+	}
+	return "", fmt.Errorf("no chat found matching %q", name)
+}
+
+// ConvertMarkdownToHTML converts basic markdown to Teams HTML
+func ConvertMarkdownToHTML(md string) string {
+	lines := strings.Split(md, "\n")
+	var result []string
+	inCodeBlock := false
+	var codeLines []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "```") {
+			if inCodeBlock {
+				// End code block
+				code := strings.Join(codeLines, "\n")
+				result = append(result, "<pre><code>"+escapeHTML(code)+"</code></pre>")
+				codeLines = nil
+				inCodeBlock = false
+			} else {
+				inCodeBlock = true
+			}
+			continue
+		}
+		if inCodeBlock {
+			codeLines = append(codeLines, line)
+			continue
+		}
+
+		// Inline formatting
+		line = convertInlineMarkdown(line)
+
+		// Headers
+		if strings.HasPrefix(line, "### ") {
+			result = append(result, "<h3>"+line[4:]+"</h3>")
+		} else if strings.HasPrefix(line, "## ") {
+			result = append(result, "<h2>"+line[3:]+"</h2>")
+		} else if strings.HasPrefix(line, "# ") {
+			result = append(result, "<h1>"+line[2:]+"</h1>")
+		} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+			result = append(result, "<li>"+line[2:]+"</li>")
+		} else if line == "" {
+			result = append(result, "<br/>")
+		} else {
+			result = append(result, "<p>"+line+"</p>")
+		}
+	}
+
+	// Close unclosed code block
+	if inCodeBlock && len(codeLines) > 0 {
+		code := strings.Join(codeLines, "\n")
+		result = append(result, "<pre><code>"+escapeHTML(code)+"</code></pre>")
+	}
+
+	return strings.Join(result, "")
+}
+
+func convertInlineMarkdown(s string) string {
+	// Bold: **text** or __text__
+	s = replaceMarkdownPairs(s, "**", "<b>", "</b>")
+	s = replaceMarkdownPairs(s, "__", "<b>", "</b>")
+	// Italic: *text* or _text_
+	s = replaceMarkdownPairs(s, "*", "<i>", "</i>")
+	s = replaceMarkdownPairs(s, "_", "<i>", "</i>")
+	// Inline code: `text`
+	s = replaceMarkdownPairs(s, "`", "<code>", "</code>")
+	// Strikethrough: ~~text~~
+	s = replaceMarkdownPairs(s, "~~", "<s>", "</s>")
+	return s
+}
+
+func replaceMarkdownPairs(s, marker, openTag, closeTag string) string {
+	for {
+		start := strings.Index(s, marker)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start+len(marker):], marker)
+		if end == -1 {
+			break
+		}
+		end += start + len(marker)
+		inner := s[start+len(marker) : end]
+		s = s[:start] + openTag + inner + closeTag + s[end+len(marker):]
+	}
+	return s
+}
+
+func escapeHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
+// BuildMentionHTML creates a Teams @mention HTML tag for a user
+func (c *Client) BuildMentionHTML(email string) (string, error) {
+	user, err := c.GetUser(email)
+	if err != nil {
+		return "", fmt.Errorf("cannot find user %s: %w", email, err)
+	}
+
+	name := user.DisplayName
+	if name == "" {
+		name = email
+	}
+
+	return fmt.Sprintf(`<at id="%s">%s</at>`, user.Mri, name), nil
+}
+
+// NotificationItem represents a parsed notification
+type NotificationItem struct {
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	Content      string `json:"content"`
+	From         string `json:"from"`
+	Context      string `json:"context"`
+	ChatID       string `json:"chat_id,omitempty"`
+	Time         string `json:"time"`
+}
+
+// GetNotifications fetches the activity/notification feed
+func (c *Client) GetNotifications(limit int, filterType string, since string) ([]NotificationItem, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+
+	endpoint := MessagesBase + "users/ME/conversations/48:notifications/messages?pageSize=" +
+		fmt.Sprintf("%d", limit) + "&startTime=0&view=msnp24Equivalent"
+
+	rawResp, err := c.doRequest("GET", endpoint, nil, auth.TokenSkype)
+	if err != nil {
+		return nil, err
+	}
+	defer rawResp.Body.Close()
+
+	var rawResult struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(rawResp.Body).Decode(&rawResult); err != nil {
+		return nil, fmt.Errorf("cannot decode notifications: %w", err)
+	}
+
+	var items []NotificationItem
+	for _, raw := range rawResult.Messages {
+		var msg map[string]interface{}
+		json.Unmarshal(raw, &msg)
+
+		actType := ""
+		context := ""
+		chatID := ""
+		from := ""
+
+		if props, ok := msg["properties"].(map[string]interface{}); ok {
+			if activity, ok := props["activity"].(map[string]interface{}); ok {
+				if at, ok := activity["activityType"].(string); ok {
+					actType = at
+				}
+				if ctx, ok := activity["activityContext"].(map[string]interface{}); ok {
+					if ct, ok := ctx["ClumpTitle"].(string); ok {
+						context = ct
+					}
+				}
+			}
+		}
+
+		if clumpID, ok := msg["clumpId"].(string); ok {
+			chatID = clumpID
+		}
+
+		if fromLink, ok := msg["from"].(string); ok {
+			// Extract MRI from URL
+			parts := strings.Split(fromLink, "/")
+			if len(parts) > 0 {
+				from = parts[len(parts)-1]
+			}
+		}
+		if dn, ok := msg["imdisplayname"].(string); ok && dn != "" {
+			from = dn
+		}
+
+		content := ""
+		if c, ok := msg["content"].(string); ok {
+			content = stripHTML(c)
+		}
+
+		composeTime := ""
+		if ct, ok := msg["composetime"].(string); ok {
+			composeTime = ct
+		}
+
+		// Filter by --since time
+		if since != "" && composeTime != "" {
+			var sinceTime time.Time
+			for _, layout := range []string{"2006-01-02", "2006-01-02T15:04:05Z", time.RFC3339} {
+				if t, err := time.Parse(layout, since); err == nil {
+					sinceTime = t
+					break
+				}
+			}
+			if !sinceTime.IsZero() {
+				if msgTime, err := time.Parse(time.RFC3339Nano, composeTime); err == nil {
+					if msgTime.Before(sinceTime) {
+						continue
+					}
+				}
+			}
+		}
+
+		// Filter by type if specified
+		if filterType != "" {
+			match := false
+			switch filterType {
+			case "mention", "mentions":
+				match = actType == "mention" || actType == "mentionInChat"
+			case "reply", "replies":
+				match = actType == "replyToReply" || actType == "replyToConversation"
+			case "reaction", "reactions":
+				match = actType == "reactionInChat"
+			default:
+				match = actType == filterType
+			}
+			if !match {
+				continue
+			}
+		}
+
+		items = append(items, NotificationItem{
+			ID:      fmt.Sprintf("%v", msg["id"]),
+			Type:    actType,
+			Content: content,
+			From:    from,
+			Context: context,
+			ChatID:  chatID,
+			Time:    composeTime,
+		})
+	}
+
+	return items, nil
+}
+
 // FindChatByEmail finds a 1:1 chat with the given email.
 // It prefers true 1:1 chats over meeting chats, and falls back to creating
 // a new 1:1 chat if none exists.

@@ -9,14 +9,15 @@ import (
 )
 
 var (
-	chatFilterType string
-	chatUnread     bool
-	chatLimit      int
-	chatOffset     int
-	chatCompact    bool
-	chatWith       string
+	chatFilterType  string
+	chatUnread      bool
+	chatLimit       int
+	chatOffset      int
+	chatCompact     bool
+	chatWith        string
 	chatActiveSince string
-	createWith     string
+	chatIncludeBots bool
+	createWith      string
 )
 
 var chatsCmd = &cobra.Command{
@@ -37,6 +38,7 @@ var chatsListCmd = &cobra.Command{
 			Compact:     chatCompact,
 			WithPerson:  chatWith,
 			ActiveSince: chatActiveSince,
+			IncludeBots: chatIncludeBots,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to list chats: %w", err)
@@ -145,13 +147,14 @@ func truncate(s string, max int) string {
 }
 
 func init() {
-	chatsListCmd.Flags().StringVar(&chatFilterType, "type", "", "Filter by chat type: 1:1, group")
+	chatsListCmd.Flags().StringVar(&chatFilterType, "type", "", "Filter by chat type: dm, 1:1, group")
 	chatsListCmd.Flags().BoolVar(&chatUnread, "unread", false, "Only show unread conversations")
 	chatsListCmd.Flags().IntVar(&chatLimit, "limit", 0, "Limit number of results")
 	chatsListCmd.Flags().IntVar(&chatOffset, "offset", 0, "Skip first N results (pagination)")
 	chatsListCmd.Flags().BoolVar(&chatCompact, "compact", false, "Compact output (omit members array)")
 	chatsListCmd.Flags().StringVar(&chatWith, "with", "", "Find chats containing a person (name or email)")
 	chatsListCmd.Flags().StringVar(&chatActiveSince, "active-since", "", "Only chats with activity since date (YYYY-MM-DD)")
+	chatsListCmd.Flags().BoolVar(&chatIncludeBots, "include-bots", false, "Include bot members in DM chat listings")
 
 	chatsCreateCmd.Flags().StringVar(&createWith, "with", "", "Email of user to create 1:1 chat with")
 
