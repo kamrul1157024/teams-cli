@@ -308,7 +308,9 @@ func (c *Client) DeleteMessage(chatID, messageID string) error {
 	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody))
 }
 
-// ReplyToMessage sends a reply to a specific message (threaded reply)
+// ReplyToMessage sends a threaded reply to a specific message.
+// For channel messages (@thread.tacv2), posts to the thread conversation ID (channelID;messageid=parentID).
+// For chat messages, posts to /messages with replyChain in properties.
 func (c *Client) ReplyToMessage(chatID, parentMessageID, content string) (*SendResult, error) {
 	displayName := ""
 	email, err := auth.GetEmail()
@@ -339,14 +341,26 @@ func (c *Client) ReplyToMessage(chatID, parentMessageID, content string) (*SendR
 		},
 	}
 
+	// For channel threads, post to the thread conversation ID: channelID;messageid=parentID
+	// For chat replies, post to /messages with replyChain in properties
+	convID := chatID
+	if strings.Contains(chatID, "@thread.tacv2") {
+		convID = chatID + ";messageid=" + parentMessageID
+	} else {
+		// Chat replies use replyChain property
+		replyChain, _ := json.Marshal([]map[string]string{
+			{"messageId": parentMessageID, "conversationId": chatID},
+		})
+		props := body["properties"].(map[string]interface{})
+		props["replyChain"] = string(replyChain)
+	}
+
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal reply: %w", err)
 	}
 
-	// Reply endpoint uses the parent message ID in the URL
-	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
-		"/messages/" + url.PathEscape(parentMessageID)
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(convID) + "/messages"
 
 	var resp SendMessageResponse
 	if err := c.postJSON(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody), &resp); err != nil {
