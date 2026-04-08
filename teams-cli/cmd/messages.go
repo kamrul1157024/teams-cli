@@ -435,6 +435,40 @@ var messagesStatsCmd = &cobra.Command{
 	},
 }
 
+var messagesReactCmd = &cobra.Command{
+	Use:   "react <chat-id> <message-id> <emoji>",
+	Short: "React to a message with an emoji",
+	Long: `React to a message with an emoji reaction.
+
+Valid reactions: like (👍), heart (❤️), laugh (😂), surprised (😮), sad (😢), angry (😡)
+
+Examples:
+  teams-cli messages react 19:abc@thread.v2 1234567890 like
+  teams-cli messages react 19:abc@thread.v2 1234567890 heart
+  teams-cli messages react 19:abc@thread.v2 1234567890 👍`,
+	Args: cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := newClient()
+		err := client.ReactToMessage(args[0], args[1], args[2])
+		if err != nil {
+			return fmt.Errorf("failed to react: %w", err)
+		}
+
+		switch outputFormat {
+		case "text":
+			fmt.Printf("Reacted with %s\n", args[2])
+		default:
+			output.JSON(map[string]string{
+				"status":     "reacted",
+				"chat_id":    args[0],
+				"message_id": args[1],
+				"emoji":      args[2],
+			}, prettyPrint)
+		}
+		return nil
+	},
+}
+
 func formatMessageTime(t string) string {
 	parsed, err := time.Parse(time.RFC3339Nano, t)
 	if err != nil {
@@ -480,6 +514,7 @@ func init() {
 	messagesCmd.AddCommand(messagesMineCmd)
 	messagesCmd.AddCommand(messagesExportCmd)
 	messagesCmd.AddCommand(messagesStatsCmd)
+	messagesCmd.AddCommand(messagesReactCmd)
 	rootCmd.AddCommand(messagesCmd)
 
 	contactsCmd.AddCommand(contactsListCmd)

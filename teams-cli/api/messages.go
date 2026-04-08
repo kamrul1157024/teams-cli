@@ -193,6 +193,74 @@ func (c *Client) SendMessage(chatID string, content string) (*SendResult, error)
 	}, nil
 }
 
+// ReactToMessage adds an emoji reaction to a message
+func (c *Client) ReactToMessage(chatID, messageID, emoji string) error {
+	// Map common emoji names to Teams emotion keys
+	emojiMap := map[string]string{
+		"like":      "like",
+		"heart":     "heart",
+		"laugh":     "laugh",
+		"surprised": "surprised",
+		"sad":       "sad",
+		"angry":     "angry",
+		"👍":         "like",
+		"❤️":        "heart",
+		"😂":         "laugh",
+		"😮":         "surprised",
+		"😢":         "sad",
+		"😡":         "angry",
+		"thumbsup":  "like",
+		"love":      "heart",
+		"haha":      "laugh",
+		"wow":       "surprised",
+	}
+
+	emotionKey, ok := emojiMap[strings.ToLower(emoji)]
+	if !ok {
+		emotionKey = strings.ToLower(emoji)
+	}
+
+	// Validate it's a known Teams reaction
+	validReactions := map[string]bool{
+		"like": true, "heart": true, "laugh": true,
+		"surprised": true, "sad": true, "angry": true,
+	}
+	if !validReactions[emotionKey] {
+		return fmt.Errorf("unknown reaction %q — valid: like, heart, laugh, surprised, sad, angry", emoji)
+	}
+
+	myEmail, err := auth.GetEmail()
+	if err != nil {
+		return fmt.Errorf("cannot get user email: %w", err)
+	}
+
+	me, err := c.GetMe()
+	if err != nil {
+		return fmt.Errorf("cannot get user info: %w", err)
+	}
+
+	reaction := map[string]interface{}{
+		"key": emotionKey,
+		"user": map[string]interface{}{
+			"mri":         me.Mri,
+			"displayName": me.DisplayName,
+			"email":       myEmail,
+		},
+	}
+
+	// The emotions property is a JSON string containing an array
+	emotions := []interface{}{reaction}
+	emotionsJSON, err := json.Marshal(emotions)
+	if err != nil {
+		return fmt.Errorf("cannot marshal reaction: %w", err)
+	}
+
+	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
+		"/messages/" + url.PathEscape(messageID) + "/properties?name=emotions"
+
+	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(emotionsJSON))
+}
+
 // FindChatByEmail finds a 1:1 chat with the given email.
 // It prefers true 1:1 chats over meeting chats, and falls back to creating
 // a new 1:1 chat if none exists.

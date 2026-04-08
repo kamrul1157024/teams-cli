@@ -418,7 +418,12 @@ teams-cli messages search "query" --chat <id> --format json    # Search in speci
 teams-cli messages mine --format json                          # My messages across chats
 teams-cli messages stats <chat-id> --format json               # Message count by sender
 teams-cli messages export <chat-id> -o chat.json               # Export chat history
+teams-cli messages react <chat-id> <message-id> like           # React with emoji
+teams-cli messages react <chat-id> <message-id> heart          # React with heart
 ```
+
+**Emoji reactions:** Valid reactions are: `like` (👍), `heart` (❤️), `laugh` (😂),
+`surprised` (😮), `sad` (😢), `angry` (😡). You can also use the emoji characters directly.
 
 ### Teams & Channels
 
@@ -664,6 +669,7 @@ If a message touches on politics, religion, or controversial topics:
 | My profile | `teams-cli me --format json` |
 | Auth status | `teams-cli status --format json` |
 | Re-auth | `teams-cli auth` |
+| React emoji | `teams-cli messages react <chat-id> <msg-id> like` |
 | Clear cache | `teams-cli cache clear` |
 | Show config | `teams-cli config show --format json` |
 | Signature on | `teams-cli config signature on` |

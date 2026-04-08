@@ -100,6 +100,15 @@ func (c *Client) getJSON(url string, tokenType auth.TokenType, result any) error
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
+func (c *Client) putRequest(url string, tokenType auth.TokenType, body io.Reader) error {
+	resp, err := c.doRequest("PUT", url, body, tokenType)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 func (c *Client) postJSON(url string, tokenType auth.TokenType, body io.Reader, result any) error {
 	resp, err := c.doRequest("POST", url, body, tokenType)
 	if err != nil {
