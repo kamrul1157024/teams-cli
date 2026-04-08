@@ -268,6 +268,12 @@ func (c *Client) EditMessage(chatID, messageID, newContent string) error {
 		newContent = "<p>" + newContent + "</p>"
 	}
 
+	// Append signature if enabled
+	cfg := LoadConfig()
+	if cfg.SignatureEnabled && cfg.Signature != "" {
+		newContent = newContent + "<p><em>— " + cfg.Signature + "</em></p>"
+	}
+
 	body := map[string]interface{}{
 		"content":     newContent,
 		"messagetype": "RichText/Html",
