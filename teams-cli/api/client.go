@@ -17,8 +17,9 @@ const (
 )
 
 type Client struct {
-	http  *http.Client
-	cache CacheConfig
+	http     *http.Client
+	cache    CacheConfig
+	reauthed bool
 }
 
 func NewClient() *Client {
@@ -38,7 +39,14 @@ func NewClientWithCache(cfg CacheConfig) *Client {
 func (c *Client) doRequest(method, url string, body io.Reader, tokenType auth.TokenType) (*http.Response, error) {
 	token, err := auth.EnsureValidToken(tokenType)
 	if err != nil {
-		return nil, err
+		if c.reauthed {
+			return nil, err
+		}
+		if authErr := auth.Reauth(); authErr != nil {
+			return nil, fmt.Errorf("authentication failed: %w", authErr)
+		}
+		c.reauthed = true
+		return c.doRequest(method, url, body, tokenType)
 	}
 
 	req, err := http.NewRequest(method, url, body)
@@ -77,9 +85,13 @@ func (c *Client) doRequest(method, url string, body io.Reader, tokenType auth.To
 		break
 	}
 
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+	if (resp.StatusCode == 401 || resp.StatusCode == 403) && !c.reauthed {
 		resp.Body.Close()
-		return nil, fmt.Errorf("authentication failed (HTTP %d): run 'teams-cli auth' to re-authenticate", resp.StatusCode)
+		if err := auth.Reauth(); err != nil {
+			return nil, fmt.Errorf("authentication failed: %w", err)
+		}
+		c.reauthed = true
+		return c.doRequest(method, url, body, tokenType)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

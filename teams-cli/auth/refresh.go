@@ -19,10 +19,8 @@ type AuthzResponse struct {
 }
 
 func RefreshSkypeToken() (string, error) {
-	// Use the original Skype Spaces Bearer token for the authz exchange
 	raw, err := LoadToken(TokenSkypeSpaces)
 	if err != nil {
-		// Fall back to skype token if skype-spaces doesn't exist (legacy)
 		raw, err = LoadToken(TokenSkype)
 		if err != nil {
 			return "", fmt.Errorf("cannot load skype token for refresh: %w", err)
@@ -79,10 +77,16 @@ func EnsureValidToken(t TokenType) (string, error) {
 		return RefreshSkypeToken()
 	}
 
-	// SkypeSpaces uses the same underlying token, can't refresh independently
-	if t == TokenSkypeSpaces {
-		return "", fmt.Errorf("token %s expired (run 'teams-cli auth' to re-authenticate)", t)
-	}
-
 	return "", fmt.Errorf("token %s expired (run 'teams-cli auth' to re-authenticate)", t)
+}
+
+// Reauth runs the full OAuth flow to get fresh tokens.
+func Reauth() error {
+	fmt.Println("Tokens expired — re-authenticating...")
+	_, err := RunOAuth()
+	if err != nil {
+		return fmt.Errorf("auto re-authentication failed: %w", err)
+	}
+	fmt.Println("Re-authentication complete")
+	return nil
 }

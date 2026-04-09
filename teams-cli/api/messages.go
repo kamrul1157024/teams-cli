@@ -291,27 +291,17 @@ func (c *Client) EditMessage(chatID, messageID, newContent string) error {
 	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody))
 }
 
-// DeleteMessage soft-deletes a previously sent message
+// DeleteMessage deletes a previously sent message
 func (c *Client) DeleteMessage(chatID, messageID string) error {
-	body := map[string]interface{}{
-		"content":       "",
-		"messagetype":   "RichText/Html",
-		"contenttype":   "text",
-		"skypeeditedid": messageID,
-		"properties": map[string]interface{}{
-			"deletetime": fmt.Sprintf("%d", time.Now().UnixMilli()),
-		},
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("cannot marshal delete: %w", err)
-	}
-
 	endpoint := MessagesBase + "users/ME/conversations/" + url.PathEscape(chatID) +
 		"/messages/" + url.PathEscape(messageID)
 
-	return c.putRequest(endpoint, auth.TokenSkype, bytes.NewReader(jsonBody))
+	resp, err := c.doRequest("DELETE", endpoint, nil, auth.TokenSkype)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 // ReplyToMessage sends a threaded reply to a specific message.

@@ -32,7 +32,7 @@ var (
 	searchLimit    int
 	listTo         string
 	exportFile     string
-	deleteConfirm  bool
+
 	sendQuote      string
 	notifLimit     int
 	notifType      string
@@ -402,55 +402,6 @@ var messagesExportCmd = &cobra.Command{
 	},
 }
 
-var contactsCmd = &cobra.Command{
-	Use:   "contacts",
-	Short: "Manage contacts",
-}
-
-var contactsListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all unique contacts from your chats",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := newClient()
-		chats, err := client.ListChats("", false, 0)
-		if err != nil {
-			return fmt.Errorf("failed to list chats: %w", err)
-		}
-
-		seen := map[string]bool{}
-		var contacts []map[string]string
-		for _, chat := range chats {
-			for _, member := range chat.Members {
-				if seen[member] {
-					continue
-				}
-				seen[member] = true
-				contacts = append(contacts, map[string]string{
-					"name":    member,
-					"chat_id": chat.ID,
-					"type":    chat.Type,
-				})
-			}
-		}
-
-		switch outputFormat {
-		case "text":
-			for _, c := range contacts {
-				fmt.Println(c["name"])
-			}
-		case "table":
-			headers := []string{"NAME", "CHAT TYPE", "CHAT ID"}
-			var rows [][]string
-			for _, c := range contacts {
-				rows = append(rows, []string{c["name"], c["type"], truncate(c["chat_id"], 40)})
-			}
-			output.Table(headers, rows)
-		default:
-			output.JSON(contacts, prettyPrint)
-		}
-		return nil
-	},
-}
 
 var messagesStatsCmd = &cobra.Command{
 	Use:   "stats <chat-id>",
@@ -580,15 +531,9 @@ var messagesDeleteCmd = &cobra.Command{
 	Long: `Delete a previously sent message.
 
 Examples:
-  teams-cli messages delete 19:abc@thread.v2 1234567890
-  teams-cli messages delete 19:abc@thread.v2 1234567890 --confirm`,
+  teams-cli messages delete 19:abc@thread.v2 1234567890`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !deleteConfirm {
-			fmt.Printf("Delete message %s from %s? Use --confirm to proceed.\n", args[1], args[0])
-			return nil
-		}
-
 		client := newClient()
 		err := client.DeleteMessage(args[0], args[1])
 		if err != nil {
@@ -752,7 +697,7 @@ func init() {
 
 	messagesEditCmd.Flags().StringVar(&sendQuote, "quote", "", "Embed/quote a message by ID")
 
-	messagesDeleteCmd.Flags().BoolVar(&deleteConfirm, "confirm", false, "Confirm deletion (required)")
+
 
 	messagesReplyCmd.Flags().StringVar(&sendFormat, "msg-format", "", "Message format: markdown")
 	messagesReplyCmd.Flags().StringVar(&sendQuote, "quote", "", "Embed/quote a message by ID")
@@ -774,6 +719,4 @@ func init() {
 	notificationsCmd.Flags().StringVar(&notifSince, "since", "", "Only notifications since date (YYYY-MM-DD)")
 	rootCmd.AddCommand(notificationsCmd)
 
-	contactsCmd.AddCommand(contactsListCmd)
-	rootCmd.AddCommand(contactsCmd)
 }

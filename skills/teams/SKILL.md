@@ -13,29 +13,7 @@ All outgoing messages MUST be shown to the user for confirmation before sending.
 
 ---
 
-## Step 0: Preflight Checks (ALWAYS DO FIRST)
-
-Before ANY Teams operation, run these checks in order. Do not skip.
-
-### 0a. Verify Authentication
-
-```bash
-teams-cli status --format json
-```
-
-Check that ALL three tokens (teams, skype, chatsvcagg) show `"valid": true`.
-If ANY token is invalid or missing, tell the user:
-
-> "Your Teams tokens are expired. Please run `! teams-cli auth` to re-authenticate."
-
-**Do NOT proceed until all tokens are valid.** The chats API uses chatsvcagg, the messages
-API uses skype — if only one is valid, some commands will fail with 401.
-
-**Token expiry awareness:** Tokens last ~1 hour. If you're doing a long task (like profile
-setup), re-check `teams-cli status --format json` every 15-20 minutes. The messages API
-may fail with 401 even when the chats API still works because they use different tokens.
-
-### 0b. Check Profile Exists
+## Step 0: Check Profile Exists
 
 ```bash
 ls ~/.teams-agent/persona.md 2>/dev/null
@@ -46,6 +24,9 @@ doing anything else. Do not ask — just begin the setup process described in "B
 Profile" below. The profile is required for persona-aware replies.
 
 If the profile exists, proceed to what the user asked for.
+
+**Authentication is automatic.** The CLI auto-detects expired tokens and re-authenticates
+via webview. No need to check `teams-cli status` or run `teams-cli auth` manually.
 
 ---
 
@@ -96,49 +77,34 @@ queries, the cache is always bypassed to avoid showing stale read/unread state.
 This runs automatically when `/teams` is invoked and no profile exists. The profile
 enables persona-aware messaging — without it, replies will be generic.
 
-### Step 1: Create Directory Structure & Get Identity
+### Step 1: Create Directory Structure & Discover Conversations
 
 ```bash
 mkdir -p ~/.teams-agent/{contacts,groups,patterns}
 teams-cli me --format json
+teams-cli contacts discover --days 30 --format json
 ```
 
-Save the user's display name — this is used to identify which messages in chat history
-are FROM the user.
+The `contacts discover` command fetches messages from active chats, groups them by
+contact, tags your messages as "me", and includes message counts. This single command
+replaces manual chat-by-chat fetching.
+
+Use `--contact "name"` to discover for a specific person (supports nicknames).
+Use `--chats N` and `--msgs N` to control scan depth.
 
 ### Step 2: Build Persona
 
-Analyze the user's own messages to extract their communication style.
-
-1. Get active chats (keep output small):
-```bash
-teams-cli chats list --format json 2>&1 | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-# Pick chats with recent messages, prefer 1:1 for cleaner signal
-for c in data[:15]:
-    print(json.dumps({'id':c['id'],'title':c.get('title',''),'type':c['type']}))" 
-```
-
-2. Fetch messages from 5-10 active chats. Run these in **parallel** to save time:
-```bash
-teams-cli messages list "<chat-id>" -n 50 --format json 2>&1 | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-for m in data:
-    print(json.dumps({'from':m['from'],'content':m['content'][:200],'time':m['time']}))"
-```
-
-3. From the fetched messages, filter to messages FROM the user (match display name from Step 1)
-4. Analyze the user's messages for:
+From the discover output, filter to messages where `from` is `"me"` across all contacts.
+Analyze your messages for:
    - Tone (casual, formal, mixed)
-   - Common phrases they actually use (extract exact quotes)
+   - Common phrases you actually use (extract exact quotes)
    - Response length patterns (short/detailed)
    - Greeting style ("hey", "hi", "hello")
    - Sign-off style (if any)
    - Emoji usage (none, minimal, frequent)
-   - Things they seem to avoid
-5. Write to `~/.teams-agent/persona.md`
+   - Things you avoid
+
+Write to `~/.teams-agent/persona.md`
 
 **persona.md format:**
 
@@ -174,28 +140,36 @@ for m in data:
 
 ### Step 3: Build Contact Profiles
 
-For each frequent contact found in chat history:
+From the same discover output, build profiles for contacts with the most messages.
+Focus on contacts with `my_messages > 0` (you've actually interacted with them).
 
-1. Fetch conversation history (already done in Step 2, reuse that data)
-2. Look up contact info if email is available: `teams-cli users search <email> --format json`
+For each contact:
+1. Look at their conversations (DMs are strongest signal, then groups)
+2. Derive email from name: `firstname.lastname@optimizely.com`
 3. Analyze the conversation for:
    - Relationship type (teammate, manager, report, external)
    - Closeness level (close, friendly, professional, formal, new)
    - Common topics discussed
-   - Tone of exchanges
-   - Who initiates more often
+   - Tone of exchanges (formal vs casual, Bangla vs English)
    - Sample exchanges that capture the dynamic
-4. Write to `~/.teams-agent/contacts/<firstname-lastname>.md`
+4. Write to `~/.teams-agent/contacts/<email>.md` (filename is always the email)
+
+To discover for a single contact later:
+```bash
+teams-cli contacts discover --contact "nabil" --format json    # By name
+teams-cli contacts discover --contact "tusher" --format json   # By nickname
+```
 
 **Name disambiguation:** Multiple people can have similar names (e.g., "Kamrul Hassan" vs
-"Kamrul Hasan"). Always cross-reference with email or MRI to avoid merging different people
-into one profile. When in doubt, ask the user.
+"Kamrul Hasan"). Email is the unique identifier — each contact file is named by email.
+Use nicknames for non-obvious aliases (e.g., "tusher" for "Kamrul Hasan").
 
 **Contact profile format:**
 
 ```markdown
 # [Contact Name]
 email: [email]
+nicknames: [comma-separated aliases not derivable from the display name]
 
 ## Bangla Pronoun
 - pronoun: [tui | tumi | apni]
@@ -432,7 +406,7 @@ teams-cli messages reply <chat-id> <msg-id> "text" --quote <quote-msg-id>  # Rep
 teams-cli messages send <chat-id> "text" --quote <msg-id>      # Send with embedded quote
 teams-cli messages edit <chat-id> <msg-id> "updated text"      # Edit sent message
 teams-cli messages edit <chat-id> <msg-id> "text" --quote <quote-msg-id>  # Edit with embedded quote
-teams-cli messages delete <chat-id> <msg-id> --confirm         # Delete sent message
+teams-cli messages delete <chat-id> <msg-id>                    # Delete sent message
 teams-cli messages search "query" --format json                # Search messages
 teams-cli messages search "query" --chat <id> --format json    # Search in specific chat
 teams-cli messages mine --format json                          # My messages across chats
@@ -497,8 +471,15 @@ teams-cli users resolve "mri1,mri2" --format json     # Batch resolve MRIs
 ### Contacts
 
 ```bash
-teams-cli contacts list --format json                  # All unique contacts from chats
+teams-cli contacts list --format json                  # All contacts, sorted by most contacted
+teams-cli contacts list "nabil" --format json          # Search by name, email, or nickname (includes persona)
+teams-cli contacts list "tusher" --format json         # Nickname search (prioritized over name match)
+teams-cli contacts sync                                # Force refresh contacts cache
 ```
+
+Contact search returns persona/interaction data inline when searching a specific person.
+Search priority: nickname match > name match > email match.
+Contact profiles stored at `~/.teams-agent/contacts/<email>.md`.
 
 ### Output Formats
 
@@ -551,9 +532,8 @@ a single chat can be several KB.
 
 When the user invokes `/teams`:
 
-1. Run **Step 0: Preflight Checks** (auth + profile existence)
-2. If no profile exists, run **Building Your Profile** automatically
-3. Then ask what they want to do
+1. Check if `~/.teams-agent/persona.md` exists — if not, run **Building Your Profile** automatically
+2. Then proceed to what the user asked for
 
 ### Check Unread Messages
 
@@ -614,7 +594,7 @@ skip any step. If a file is missing, note it and proceed with defaults.
 
 - [ ] **Safety rules** — read `~/.teams-agent/safety-rules.md` (always apply)
 - [ ] **Persona** — read `~/.teams-agent/persona.md` (base tone)
-- [ ] **Contact profile** — read `~/.teams-agent/contacts/<name>.md` (relationship-specific tone)
+- [ ] **Contact profile** — `teams-cli contacts list "<name>" --format json` (returns persona inline)
 - [ ] **Group profile** — if group chat, read `~/.teams-agent/groups/<name>.md` (group dynamics)
 - [ ] **Patterns** — read relevant `~/.teams-agent/patterns/*.md` (topic-specific templates)
 - [ ] **Conversation history** — fetch via `teams-cli messages list` (recent context)
@@ -644,23 +624,24 @@ After helping with messages, offer to update context if new patterns emerged:
 
 ### Incremental Updates
 
-When updating profiles, don't re-fetch everything from scratch:
+Use `contacts discover` with a shorter time window to get recent data:
 
-1. Check when the profile was last updated (look at file modification time)
-2. Only fetch messages newer than the last update
-3. MERGE new information — don't replace the existing profile
-4. Add new phrases, update patterns, note tone shifts
-5. Always show the user what changed before writing
+```bash
+teams-cli contacts discover --days 7 --format json                    # Recent activity
+teams-cli contacts discover --days 7 --contact "nabil" --format json  # Single contact
+```
+
+MERGE new information — don't replace the existing profile. Add new phrases, update
+patterns, note tone shifts. Always show the user what changed before writing.
 
 ### Manually Update
 
 The user can ask to:
-- "Update my persona" — re-analyze recent messages
-- "Add a contact" — create a new contact profile
-- "Update Alice's profile" — fetch recent conversations and update
-- "Add a response pattern for deployment questions"
+- "Update my persona" — run `contacts discover --days 7`, re-analyze "me" messages
+- "Add a contact" — run `contacts discover --contact "name"`, create profile from output
+- "Update Alice's profile" — run `contacts discover --contact "alice"`, merge new data
 - "Show me my persona" — read and display persona.md
-- "Show me Alice's profile" — read and display the contact file
+- "Show me Alice's profile" — `teams-cli contacts list "alice" --format json` (includes persona inline)
 
 ---
 
@@ -718,7 +699,7 @@ If a message touches on politics, religion, or controversial topics:
 | Reply thread | `teams-cli messages reply <chat-id> <msg-id> "text"` |
 | Reply + quote | `teams-cli messages reply <chat-id> <msg-id> "text" --quote <quote-id>` |
 | Edit message | `teams-cli messages edit <chat-id> <msg-id> "new text"` |
-| Delete message | `teams-cli messages delete <chat-id> <msg-id> --confirm` |
+| Delete message | `teams-cli messages delete <chat-id> <msg-id>` |
 | Search | `teams-cli messages search "query" --format json` |
 | Resolve email | `teams-cli chats resolve email` |
 | Create DM | `teams-cli chats create --with email --format json` |
@@ -726,7 +707,11 @@ If a message touches on politics, religion, or controversial topics:
 | Compact chats | `teams-cli chats list --compact --format json` |
 | Chat stats | `teams-cli messages stats <chat-id> --format json` |
 | Export chat | `teams-cli messages export <chat-id> -o file.json` |
-| All contacts | `teams-cli contacts list --format json` |
+| All contacts | `teams-cli contacts list --format json` (sorted by most contacted) |
+| Find contact | `teams-cli contacts list "name" --format json` (includes persona) |
+| Sync contacts | `teams-cli contacts sync` |
+| Discover convos | `teams-cli contacts discover --format json` (persona building) |
+| Discover one | `teams-cli contacts discover --contact "name" --format json` |
 | List teams | `teams-cli teams list --format json` |
 | List channels | `teams-cli channels list <team-id> --format json` |
 | Look up user | `teams-cli users search email-or-name --format json` |
@@ -758,12 +743,12 @@ If a message touches on politics, religion, or controversial topics:
   teams-cli messages list <chat-id> -n 5 --format json
   ```
   If the sent message appears in the results, it was delivered despite the error.
-- **Users search returns empty/error:** The `teams-cli users search` command requires an
-  **exact email address** — it does NOT support display name search. If you only have a
-  display name, find the email by:
-  1. Checking contact profiles in `~/.teams-agent/contacts/`
-  2. Looking at chat member lists from `teams-cli chats list --format json` (members include MRI which contains the email)
-  3. Asking the user for the email
+- **Finding a contact:** Always start with `teams-cli contacts list "name" --format json`.
+  This searches by name, email, and nickname, returns persona data, and is sorted by most contacted.
+  If not found there, try:
+  1. `teams-cli users search "<email>" --format json` (exact email lookup)
+  2. `teams-cli chats list --with "name" --format json` (find chats with someone)
+  3. Ask the user for the email
 
 ## Chat Validation Before Sending
 
