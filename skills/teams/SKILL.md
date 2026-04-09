@@ -145,14 +145,15 @@ Focus on contacts with `my_messages > 0` (you've actually interacted with them).
 
 For each contact:
 1. Look at their conversations (DMs are strongest signal, then groups)
-2. Derive email from name: `firstname.lastname@optimizely.com`
+2. Get contact info: `teams-cli contacts list "name" --format json` — this returns email,
+   MRI, nicknames, and persona data. Always use this first, never guess emails.
 3. Analyze the conversation for:
    - Relationship type (teammate, manager, report, external)
    - Closeness level (close, friendly, professional, formal, new)
    - Common topics discussed
    - Tone of exchanges (formal vs casual, Bangla vs English)
    - Sample exchanges that capture the dynamic
-4. Write to `~/.teams-agent/contacts/<email>.md` (filename is always the email)
+4. Write to `~/.teams-agent/contacts/<email>.md` (or `<sanitized-name>.md` if email unknown)
 
 To discover for a single contact later:
 ```bash
@@ -161,8 +162,8 @@ teams-cli contacts discover --contact "tusher" --format json   # By nickname
 ```
 
 **Name disambiguation:** Multiple people can have similar names (e.g., "Kamrul Hassan" vs
-"Kamrul Hasan"). Email is the unique identifier — each contact file is named by email.
-Use nicknames for non-obvious aliases (e.g., "tusher" for "Kamrul Hasan").
+"Kamrul Hasan"). Email is the unique identifier when available. When email is unknown,
+MRI is the unique identifier. Use nicknames for non-obvious aliases (e.g., "tusher" for "Kamrul Hasan").
 
 **Contact profile format:**
 
